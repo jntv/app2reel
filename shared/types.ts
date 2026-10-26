@@ -13,9 +13,9 @@ export interface ProductTheme {
 }
 export interface ProductVisualModel { heading?: string; labels: string[]; layout: 'dashboard'|'table'|'calendar'|'form'|'analytics'|'workspace'; accent?: string; }
 export interface CursorSample { at: number; x: number; y: number; kind: 'move'|'click'|'type'; }
-export interface RenderSettings { motion: 'cinematic'|'subtle'; subtitles: boolean; cursorHighlights: boolean; narration?: boolean; themeSource?: 'product'|'custom'; }
-export const DEFAULT_RENDER_SETTINGS: RenderSettings = { motion: 'cinematic', subtitles: true, cursorHighlights: true, narration: true, themeSource: 'product' };
-export interface Scene { id: string; title: string; caption: string; narration: string; duration: number; screenshot?: string; recordingStart?: number; recordingEnd?: number; feature?: string; focus?: CameraFocus; focusArea?: PrivacyMask; redactions?: PrivacyMask[]; visualModel?: ProductVisualModel; }
+export interface RenderSettings { motion: 'cinematic'|'subtle'; subtitles: boolean; cursorHighlights: boolean; narration?: boolean; themeSource?: 'product'|'custom'; promoAspect?: 'landscape'|'portrait'; }
+export const DEFAULT_RENDER_SETTINGS: RenderSettings = { motion: 'cinematic', subtitles: true, cursorHighlights: true, narration: true, themeSource: 'product', promoAspect: 'landscape' };
+export interface Scene { id: string; title: string; caption: string; narration: string; duration: number; screenshot?: string; recordingStart?: number; recordingEnd?: number; feature?: string; focus?: CameraFocus; focusArea?: PrivacyMask; focusRevealAt?: number; redactions?: PrivacyMask[]; visualModel?: ProductVisualModel; }
 export interface Source { title: string; url: string; summary: string; }
 export interface Finding { feature: string; status: 'observed'|'not-observed'; evidence: string; screenshot?: string; }
 export interface Shot { id: string; title: string; url: string; screenshot: string; at: number; action?: string; visualModel?: ProductVisualModel; focusArea?: PrivacyMask; entryStart?:number; entrySettled?:number; actionStart?:number; actionEnd?:number; }

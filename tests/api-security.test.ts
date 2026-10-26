@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { briefSchema } from '../server/store';
+import { briefSchema, renderSettingsSchema, sceneSchema } from '../server/store';
 import { allowedURL, cleanURL, riskyAction } from '../server/browser';
 import { Pipeline } from '../server/pipeline';
 import type { LocalAI } from '../server/ai';
@@ -24,6 +24,15 @@ test('project URLs reject embedded credentials and executable protocols', () => 
     assert.equal(briefSchema.safeParse({ ...brief, url }).success, false);
   assert.equal(briefSchema.safeParse({ ...brief, allowedOrigins: ['https://alice:fixture-password@login.example.com'] }).success, false);
   assert.equal(briefSchema.safeParse({ ...brief, allowedOrigins: ['https://login.example.com'] }).success, true);
+});
+
+test('film format and feature reveal timing are bounded before rendering',()=>{
+  const settings={motion:'cinematic',subtitles:true,cursorHighlights:true,promoAspect:'portrait'};
+  assert.equal(renderSettingsSchema.safeParse(settings).success,true);
+  assert.equal(renderSettingsSchema.safeParse({...settings,promoAspect:'square'}).success,false);
+  const scene={id:'s',title:'Open a view',caption:'',narration:'',duration:3,focusRevealAt:1.2};
+  assert.equal(sceneSchema.safeParse(scene).success,true);
+  assert.equal(sceneSchema.safeParse({...scene,focusRevealAt:3.1}).success,false);
 });
 
 test('browser scope requires an exact allowed HTTP origin', () => {

@@ -18,7 +18,7 @@ export const briefSchema = z.object({
 
 export const renderSettingsSchema = z.object({
   motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean(),
-  narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional()
+  narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional(), promoAspect: z.enum(['landscape','portrait']).optional()
 }).strict();
 
 const colorSchema=z.string().regex(/^#[0-9a-f]{6}$/i);
@@ -34,8 +34,9 @@ export const sceneSchema = z.object({
   feature:z.string().max(200).optional(),
   focus:z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),zoom:z.number().min(1).max(2.4)}).strict().optional(),
   focusArea:rectangleSchema.optional(),visualModel:visualModelSchema.optional(),
+  focusRevealAt:z.number().min(0).max(30).optional(),
   redactions:z.array(rectangleSchema).max(8).optional()
-}).strict();
+}).strict().refine(scene=>scene.focusRevealAt===undefined||scene.focusRevealAt<=scene.duration,'Focus must begin within the scene.');
 
 export class Store {
   readonly events = new EventEmitter();

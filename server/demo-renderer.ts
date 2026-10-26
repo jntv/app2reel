@@ -6,8 +6,8 @@ import type { Page } from 'playwright';
 import type { PrivacyMask, ProductTheme, Project, Scene } from '../shared/types.js';
 import type { FilmState } from './film-state.js';
 import { demoTemplate } from './demo-template.js';
-import { attentionBounds, cameraKeys, cameraFilter, cameraForFrame, clipTiming, demoLayout, projectArea, projectCursor, sourceTime } from './demo-motion.js';
-import { cursorAt, extractRecordedCursorTrack, type CursorPoint } from './cursor-detection.js';
+import { attentionBounds, cameraKeys, cameraTiming, cameraFilter, cameraForFrame, clipTiming, demoLayout, ease, projectArea, projectCursor, sourceTime } from './demo-motion.js';
+import { cursorAt, extractRenderedCursorFrames, type CursorPoint } from './cursor-detection.js';
 import { privacyFilters, type PrivacyRectangle } from './demo-privacy.js';
 
 type Encoder = { process: ChildProcess; done: Promise<void>; stop: () => void };
@@ -43,13 +43,14 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
   check(signal);
   const settings = (project as Project & { renderSettings?: { cursorHighlights?: boolean } }).renderSettings;
   const timings = scenes.map(scene => clipTiming(scene.recordingStart!, scene.recordingEnd!, scene.frames / fps));
-  let track: CursorPoint[] = (project as Project & { cursorTrack?: CursorPoint[] }).cursorTrack || [];
+  const track: CursorPoint[] = (project as Project & { cursorTrack?: CursorPoint[] }).cursorTrack || [];
+  let cursorFrames: (CursorPoint | undefined)[][] | undefined;
   const hasTelemetry = track.length > 0;
-  if (settings?.cursorHighlights !== false && !track.length) {
+  if (settings?.cursorHighlights !== false) {
     update(0, 'Locating the cursor in the original recording');
     try {
-      track = await extractRecordedCursorTrack(recording, timings.map(t => ({ start: t.start, end: t.start + t.sourceDuration })), signal);
-      await writeFile(path.join(temporary, 'detected-cursor-track.json'), JSON.stringify({ source: 'recorded-orange-ring', track }), 'utf8');
+      cursorFrames = await extractRenderedCursorFrames(recording, timings.map((timing, index) => ({ ...timing, frames: scenes[index].frames })), fps, signal);
+      await writeFile(path.join(temporary, 'detected-cursor-track.json'), JSON.stringify({ source: 'recorded-orange-ring-output-frames', fps, scenes: cursorFrames, track: cursorFrames.flat().filter(Boolean) }), 'utf8');
     } catch (error) {
       check(signal);
       // Camera focus remains useful when a legacy recording has no recognizable pointer.
@@ -73,15 +74,20 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
     const frameState = (frame: number): FilmState => {
       const progress = (frame + 0.5) / scene.frames;
       const state = stateAt(index, progress, sceneOffset + frame);
-      const detected = cursorAt(track, sourceTime(timing, frame / fps), hasTelemetry ? Infinity : 0.55);
-      return { ...state, cursor: settings?.cursorHighlights === false ? undefined : detected || state.cursor };
+      const observed = cursorFrames?.[index]?.[frame];
+      const telemetry = hasTelemetry ? cursorAt(track, sourceTime(timing, frame / fps), Infinity) : undefined;
+      // Pixels supply the actual displayed position; only trusted telemetry can
+      // supply click events. Telemetry position is an approximation fallback.
+      const detected = observed ? { ...observed, click: telemetry?.click } : telemetry;
+      return { ...state, duration: outputDuration, focusRevealAt: scene.focusRevealAt, cursor: settings?.cursorHighlights === false ? undefined : detected || state.cursor };
     };
     const focus = scene.focus || { x: 0.5, y: 0.5, zoom: 1.4 };
     const area: PrivacyMask = scene.focusArea || { x: Math.max(0, Math.min(0.52, focus.x - 0.24)), y: Math.max(0, Math.min(0.72, focus.y - 0.14)), width: 0.48, height: 0.28 };
-    const points = settings?.cursorHighlights === false ? [] : Array.from({ length: Math.max(2, Math.ceil(outputDuration * 5)) }, (_, i) => i / 5 < outputDuration * 0.4 || i / 5 > outputDuration * 0.84 ? undefined : cursorAt(track, sourceTime(timing, i / 5), hasTelemetry ? Infinity : 0.55)).filter((point): point is { x: number; y: number; click?: boolean } => Boolean(point && point.x >= area.x - 0.08 && point.x <= area.x + area.width + 0.08 && point.y >= area.y - 0.08 && point.y <= area.y + area.height + 0.08));
+    const points = settings?.cursorHighlights === false ? [] : Array.from({ length: Math.max(2, Math.ceil(outputDuration * 5)) }, (_, i) => i / 5 < outputDuration * 0.4 || i / 5 > outputDuration * 0.84 ? undefined : cursorFrames?.[index]?.[Math.min(scene.frames - 1, Math.round(i / 5 * fps))] || (hasTelemetry ? cursorAt(track, sourceTime(timing, i / 5), Infinity) : undefined)).filter((point): point is { x: number; y: number; click?: boolean } => Boolean(point && point.x >= area.x - 0.08 && point.x <= area.x + area.width + 0.08 && point.y >= area.y - 0.08 && point.y <= area.y + area.height + 0.08));
     const bounds = attentionBounds(area, points);
     // A single shot plan includes pointer evidence without chasing its motion.
     const cameraPlan = cameraKeys({ ...frameState(0), focusArea: area }, scene.frames, layout, bounds);
+    const move = cameraTiming({ ...frameState(0), focusArea: area }, layout, bounds);
     const privacy = privacyFilters((scene as Scene & { redactions?: PrivacyRectangle[] }).redactions);
     const filter = [
       `[0:v]${privacy ? `${privacy},` : ''}setpts=(PTS-STARTPTS)/${timing.playbackRate.toFixed(8)},fps=${fps},tpad=stop_mode=clone:stop_duration=${outputDuration},trim=duration=${outputDuration},${cameraFilter(cameraPlan, layout, fps, theme?.surface)},pad=${width}:${height}:${layout.x}:${layout.y}:color=0xf4f6f9[live]`,
@@ -110,7 +116,7 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
         await page.evaluate(async payload => {
           const target = window as unknown as { setDemoState: (value: unknown) => Promise<void> };
           await target.setDemoState(payload);
-        }, { film, cursor: pointer, click, attention, captionOpacity: Math.max(0, Math.min(1, frame / (fps * 0.12), (scene.frames - 1 - frame) / (fps * 0.12))), cursorHighlights: settings?.cursorHighlights !== false });
+        }, { film, cursor: pointer, click, attention, openingOpacity: index === 0 ? ease(frame / fps / 0.15) * (1 - ease((frame / fps - 0.55) / 0.2)) : 0, closingOpacity: index === scenes.length - 1 ? ease((frame / fps - (outputDuration - 0.85)) / 0.25) : 0, attentionOpacity: ease((frame / fps - move.start - move.move * 0.55) / 0.4) * Math.max(0, Math.min(1, (scene.frames - 1 - frame) / (fps * 0.12))), captionOpacity: Math.max(0, Math.min(1, frame / (fps * 0.12), (scene.frames - 1 - frame) / (fps * 0.12))), cursorHighlights: settings?.cursorHighlights !== false });
         const pixels = await page.screenshot({ type: 'png', omitBackground: true, animations: 'disabled' });
         const input = job.process.stdin;
         if (!input || input.destroyed) { await job.done; throw new Error('Demo encoder input closed.'); }

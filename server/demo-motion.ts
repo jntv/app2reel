@@ -14,7 +14,7 @@ export const ease = (value: number): number => { const t = clamp(value); return 
 /** A large canvas, with an uncropped 16:9 context view and room for readable words. */
 export function demoLayout(width: number, height: number): DemoLayout {
   const even = (n: number) => Math.round(n / 2) * 2;
-  return { x: even(width * 0.03), y: even(height * 0.125), width: even(width * 0.94), height: even(height * 0.77) };
+  return { x: even(width * 0.025), y: even(height * 0.03), width: even(width * 0.95), height: even(height * 0.94) };
 }
 
 /** Play interactions close to real time; hold a short clip rather than slowing its cursor. */
@@ -41,23 +41,43 @@ export function attentionBounds(area: PrivacyMask, cursors: { x: number; y: numb
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-/** One deliberate context → push → hold → release. Cursor movement cannot perturb it. */
-export function cameraAt(state: FilmState, layout = demoLayout(1920, 1080), bounds?: PrivacyMask): DemoCamera {
-  const p = clamp(state.progress);
+export interface CameraTiming { start: number; move: number; duration: number; targetZoom: number }
+
+/** A held context followed by one settled, sustained detail shot, paced in seconds. */
+export function cameraTiming(state: FilmState, layout = demoLayout(1920, 1080), bounds?: PrivacyMask): CameraTiming {
+  const duration = Math.max(0.03, state.duration || 6);
   const subtle = state.motion === 'subtle';
-  const authored = state.focus || { x: 0.5, y: 0.5, zoom: 1.4 };
+  const area = bounds || state.focusArea;
+  const authored = state.focus || { x: 0.5, y: 0.5, zoom: 1.65 };
+  const coverage = area ? area.width * area.height : 0.16;
+  const overview = coverage > 0.3 || Boolean(area && area.width > 0.78 && area.height > 0.48);
+  const detail = coverage < 0.13;
+  const fit = cameraProjection({ x: 0.5, y: 0.5, zoom: 1 }, layout);
+  const limit = area ? Math.min(0.94 / Math.max(0.001, area.width * fit.sourceWidth), 0.88 / Math.max(0.001, area.height * fit.sourceHeight)) : 1.85;
+  let targetZoom = Math.max(1, Math.min(clamp(authored.zoom, 1, 2.4), subtle ? 1.24 : overview ? 1.25 : detail ? 2.2 : 1.85, limit));
+  const ready = Math.max(0, Math.min(duration, state.focusRevealAt ?? Math.min(0.72, duration * 0.14)));
+  const start = Math.min(duration, ready + (ready > 0 ? 0.08 : 0.22));
+  const available = duration - start;
+  const move = Math.min(overview ? 1.65 : detail ? 1.0 : 1.2, Math.max(0.45, available * 0.45));
+  if (available < 0.7) targetZoom = 1;
+  return { start, move, duration, targetZoom };
+}
+
+/** Pointer movement cannot perturb this editorial camera. */
+export function cameraAt(state: FilmState, layout = demoLayout(1920, 1080), bounds?: PrivacyMask): DemoCamera {
+  const authored = state.focus || { x: 0.5, y: 0.5, zoom: 1.65 };
   const area = bounds || state.focusArea;
   const subject = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : authored;
-  const fit = cameraProjection({ x: 0.5, y: 0.5, zoom: 1 }, layout);
-  const regionLimit = area ? Math.min(0.92 / Math.max(0.001, area.width * fit.sourceWidth), 0.88 / Math.max(0.001, area.height * fit.sourceHeight)) : 1.5;
-  const zoom = Math.max(1, Math.min(clamp(authored.zoom, 1, 2.4), subtle ? 1.18 : 1.5, regionLimit));
-  const amount = p < 0.14 ? 0 : p < 0.44 ? ease((p - 0.14) / 0.3) : p < 0.8 ? 1 : p < 0.98 ? 1 - ease((p - 0.8) / 0.18) : 0;
-  return { x: 0.5 + (clamp(subject.x) - 0.5) * amount, y: 0.5 + (clamp(subject.y) - 0.5) * amount, zoom: 1 + (zoom - 1) * amount };
+  const timing = cameraTiming(state, layout, bounds);
+  const amount = ease((clamp(state.progress) * timing.duration - timing.start) / timing.move);
+  return { x: 0.5 + (clamp(subject.x) - 0.5) * amount, y: 0.5 + (clamp(subject.y) - 0.5) * amount, zoom: 1 + (timing.targetZoom - 1) * amount };
 }
 
 export function cameraKeys(state: FilmState, frames: number, layout: DemoLayout, bounds?: PrivacyMask): CameraKey[] {
+  const timing = cameraTiming(state, layout, bounds);
   const keys = new Map<number, CameraKey>();
-  for (const progress of [0, 0.14, 0.44, 0.8, 0.98, 1]) {
+  for (const time of [0, timing.start, Math.min(timing.duration, timing.start + timing.move), timing.duration]) {
+    const progress = clamp(time / timing.duration);
     const frame = Math.round(progress * Math.max(0, frames - 1));
     keys.set(frame, { frame, ...cameraAt({ ...state, progress }, layout, bounds) });
   }

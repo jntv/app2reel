@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
 
 export interface CursorPoint { at: number; x: number; y: number; kind: 'move' | 'click' | 'type' }
+export interface RenderedCursorClip { start: number; sourceDuration: number; playbackRate: number; frames: number }
 interface DetectedPoint { x: number; y: number; confidence: number }
 
 const orange = (pixels: Uint8Array, position: number): boolean => {
@@ -51,15 +52,24 @@ export function detectOrangeCursor(pixels: Uint8Array, width: number, height: nu
 
 /** Streaming local-media analysis; bounded to reviewed clip windows. It emits moves only. */
 export async function extractRecordedCursorTrack(recording: string, intervals: { start: number; end: number }[], signal?: AbortSignal): Promise<CursorPoint[]> {
-  const width = 960, height = 540, fps = 5, bytes = width * height * 3;
+  const width = 960, height = 540, fps = 12.5, bytes = width * height * 3;
   const points: CursorPoint[] = [];
   const windows = intervals.filter(i => Number.isFinite(i.start) && Number.isFinite(i.end) && i.start >= 0 && i.end > i.start).slice(0, 20);
   for (const interval of windows) {
     if (signal?.aborted) throw new Error('Video rendering cancelled.');
     const duration = Math.min(90, interval.end - interval.start);
-    const child = spawn(process.env.FFMPEG_PATH || ffmpegStatic || 'ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'error', '-ss', String(interval.start), '-t', String(duration), '-i', recording, '-vf', `fps=${fps},scale=${width}:${height}:flags=bilinear`, '-an', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.env.FFMPEG_PATH || ffmpegStatic || 'ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'info', '-ss', String(interval.start), '-t', String(duration), '-i', recording, '-vf', `select='isnan(prev_selected_t)+gte(t-prev_selected_t,${1 / fps - 0.005})',scale=${width}:${height}:flags=bilinear,showinfo`, '-fps_mode', 'passthrough', '-an', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let error = '';
-    child.stderr.on('data', (data: Buffer) => { error = (error + data.toString()).slice(-2000); });
+    let lines = '';
+    const timestamps: number[] = [];
+    child.stderr.on('data', (data: Buffer) => {
+      const value = data.toString(); error = (error + value).slice(-2000); lines += value;
+      const parts = lines.split('\n'); lines = parts.pop() || '';
+      for (const line of parts) {
+        const match = /Parsed_showinfo[^\n]*\bn:\s*(\d+)[^\n]*\bpts_time:([\d.e+-]+)/.exec(line);
+        if (match) timestamps[Number(match[1])] = Number(match[2]);
+      }
+    });
     const stop = () => { child.kill('SIGTERM'); };
     signal?.addEventListener('abort', stop, { once: true });
     const done = new Promise<void>((resolve, reject) => {
@@ -68,6 +78,7 @@ export async function extractRecordedCursorTrack(recording: string, intervals: {
     });
     void done.catch(() => {});
     let pending = Buffer.alloc(0), frame = 0;
+    const detected: { frame: number; x: number; y: number }[] = [];
     let previous: DetectedPoint | undefined;
     try {
       for await (const data of child.stdout) {
@@ -75,16 +86,71 @@ export async function extractRecordedCursorTrack(recording: string, intervals: {
         pending = Buffer.concat([pending, data as Buffer]);
         while (pending.length >= bytes) {
           const found = detectOrangeCursor(pending.subarray(0, bytes), width, height, previous);
-          if (found) { points.push({ at: interval.start + frame / fps, x: found.x, y: found.y, kind: 'move' }); previous = found; }
+          if (found) { detected.push({ frame, x: found.x, y: found.y }); previous = found; }
           frame += 1; pending = pending.subarray(bytes);
         }
       }
       await done;
+      const firstTimestamp = timestamps.find(timestamp => Number.isFinite(timestamp)) || 0;
+      for (const point of detected) {
+        const timestamp = timestamps[point.frame];
+        // Demo footage resets PTS to its first decoded frame after input seeking.
+        if (Number.isFinite(timestamp)) points.push({ at: interval.start + timestamp - firstTimestamp, x: point.x, y: point.y, kind: 'move' });
+      }
     } catch (error) {
       stop(); await done.catch(() => {}); throw error;
     } finally { signal?.removeEventListener('abort', stop); }
   }
   return points.sort((a, b) => a.at - b.at);
+}
+
+/** Match the footage's displayed frames exactly; recorded motion must not be interpolated. */
+export async function extractRenderedCursorFrames(recording: string, clips: RenderedCursorClip[], fps: number, signal?: AbortSignal): Promise<(CursorPoint | undefined)[][]> {
+  if (!Number.isInteger(fps) || fps < 1 || fps > 60 || clips.length > 20) throw new Error('Invalid cursor frame sampling.');
+  const width = 960, height = 540, bytes = width * height * 3;
+  const scenes: (CursorPoint | undefined)[][] = [];
+  for (const clip of clips) {
+    if (signal?.aborted) throw new Error('Video rendering cancelled.');
+    if (!Number.isFinite(clip.start) || clip.start < 0 || !Number.isFinite(clip.sourceDuration) || clip.sourceDuration <= 0 || clip.sourceDuration > 90 || !Number.isFinite(clip.playbackRate) || clip.playbackRate < 1 || clip.playbackRate > 1.12 + 1e-7 || !Number.isInteger(clip.frames) || clip.frames < 1 || clip.frames > fps * 90) throw new Error('Invalid cursor clip sampling.');
+    const outputDuration = clip.frames / fps;
+    const child = spawn(process.env.FFMPEG_PATH || ffmpegStatic || 'ffmpeg', [
+      '-hide_banner', '-nostdin', '-loglevel', 'error', '-ss', String(clip.start), '-t', String(clip.sourceDuration), '-i', recording,
+      '-vf', `setpts=(PTS-STARTPTS)/${clip.playbackRate.toFixed(8)},fps=${fps},tpad=stop_mode=clone:stop_duration=${outputDuration},trim=duration=${outputDuration},scale=${width}:${height}:flags=bilinear`,
+      '-frames:v', String(clip.frames), '-fps_mode', 'passthrough', '-an', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let error = '';
+    child.stderr.on('data', (data: Buffer) => { error = (error + data.toString()).slice(-2000); });
+    const stop = () => { child.kill('SIGTERM'); };
+    signal?.addEventListener('abort', stop, { once: true });
+    const done = new Promise<void>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', code => code === 0 ? resolve() : reject(new Error(signal?.aborted ? 'Video rendering cancelled.' : `Rendered cursor analysis failed: ${error || code}`)));
+    });
+    void done.catch(() => {});
+    const points: (CursorPoint | undefined)[] = Array.from({ length: clip.frames });
+    let pending = Buffer.alloc(0), frame = 0;
+    let previous: DetectedPoint | undefined;
+    try {
+      for await (const data of child.stdout) {
+        if (signal?.aborted) throw new Error('Video rendering cancelled.');
+        pending = Buffer.concat([pending, data as Buffer]);
+        while (pending.length >= bytes) {
+          const found = detectOrangeCursor(pending.subarray(0, bytes), width, height, previous);
+          if (found && frame < points.length) {
+            points[frame] = { at: clip.start + Math.min(clip.sourceDuration, frame / fps * clip.playbackRate), x: found.x, y: found.y, kind: 'move' };
+            previous = found;
+          }
+          frame += 1; pending = pending.subarray(bytes);
+        }
+      }
+      await done;
+      if (frame !== clip.frames) throw new Error('Recorded cursor frame schedule did not match the demo.');
+      scenes.push(points);
+    } catch (error) {
+      stop(); await done.catch(() => {}); throw error;
+    } finally { signal?.removeEventListener('abort', stop); }
+  }
+  return scenes;
 }
 
 /** Do not bridge missing detections: a stale ring must not float over another product location. */

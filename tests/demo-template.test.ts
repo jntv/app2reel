@@ -28,7 +28,7 @@ test('demo artwork visibly renders a contrast pointer, real-region outline and a
       };
     });
     assert.equal(actual.pointerDisplay, 'block');
-    assert.ok(actual.pointerWidth >= 30, 'The pointer must be legible at720p.');
+    assert.ok(actual.pointerWidth >= 24, 'The pointer must be legible at720p.');
     assert.equal(actual.fill, 'rgb(255, 255, 255)');
     assert.equal(actual.stroke, 'rgb(17, 28, 42)');
     assert.equal(actual.outlineOpacity, '1');

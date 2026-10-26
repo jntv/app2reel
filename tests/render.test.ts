@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import ffmpeg from 'ffmpeg-static';
-import { renderVideos } from '../server/render.js';
+import { outputDimensions, renderVideos } from '../server/render.js';
 import type { Project } from '../shared/types.js';
 import { narrationEngine } from '../server/narration.js';
 
@@ -21,7 +21,9 @@ function fixture(): Project {
 test('graphics promo renders without screenshots and exports the same burned subtitle timeline', {skip:!available}, async () => {
   const directory = await mkdtemp(path.join(tmpdir(),'capture-graphics-'));
   try {
-    const [output] = await renderVideos(fixture(),directory,['promo']);
+    const project=fixture();project.renderSettings!.promoAspect='portrait';
+    const [output] = await renderVideos(project,directory,['promo']);
+    assert.deepEqual([output.width,output.height],[720,1280]);
     assert.equal(output.duration,1.2);
     assert.ok(output.poster);
     const srt = await readFile(path.join(directory,'captions.srt'),'utf8');
@@ -37,6 +39,14 @@ test('graphics promo renders without screenshots and exports the same burned sub
     assert.equal(poster.status,0,poster.stderr);
     assert.ok(!(await readdir(directory)).some(file=>file.startsWith('.render-')));
   } finally { await rm(directory,{recursive:true,force:true}); }
+});
+
+test('portrait composition is specific to the promo and old projects stay landscape',()=>{
+  const project=fixture();
+  assert.deepEqual(outputDimensions(project,'promo'),{width:1280,height:720});
+  project.renderSettings!.promoAspect='portrait';project.brief.resolution='1080p';
+  assert.deepEqual(outputDimensions(project,'promo'),{width:1080,height:1920});
+  assert.deepEqual(outputDimensions(project,'demo'),{width:1920,height:1080});
 });
 
 test('cancelled dynamic rendering preserves previous completed media and removes temporary output', {skip:!available}, async () => {

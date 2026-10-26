@@ -28,16 +28,17 @@ test('zoom is visibly dynamic while subtle motion remains bounded', () => {
   assert.equal(cameraAt({ ...state, progress: 0.6, focus: { x: -5, y: 4, zoom: 99 } }).x, 0);
 });
 
-test('camera follows one push and release while holding steady despite cursor movement', () => {
+test('camera holds a settled closeup without a repeated six-second release', () => {
   const layout = demoLayout(1920, 1080);
   const keys = cameraKeys(state, 181, layout);
   assert.deepEqual(cameraForFrame(keys, 0), { x: 0.5, y: 0.5, zoom: 1 });
-  assert.deepEqual(cameraForFrame(keys, 180), { x: 0.5, y: 0.5, zoom: 1 });
+  assert.ok(cameraForFrame(keys, 180).zoom > 1.5);
+  assert.deepEqual(cameraForFrame(keys, 150), cameraForFrame(keys, 180));
   assert.deepEqual(cameraForFrame(keys, 100), cameraForFrame(keys, 130));
   assert.deepEqual(cameraAt({ ...state, progress: 0.6, cursor: { x: 0, y: 0 } }), cameraAt({ ...state, progress: 0.6, cursor: { x: 1, y: 1 } }));
   const zooms = Array.from({ length: 181 }, (_, i) => cameraForFrame(keys, i).zoom);
   assert.ok(zooms.slice(0, 79).every((z, i, values) => i === 0 || z >= values[i - 1]));
-  assert.ok(zooms.slice(145).every((z, i, values) => i === 0 || z <= values[i - 1]));
+  assert.ok(zooms.every((z, i, values) => i === 0 || z >= values[i - 1]));
 });
 
 test('whole feature regions and real cursor evidence remain in frame during a push', () => {
@@ -60,6 +61,16 @@ test('short clips play at normal speed then hold; long clips never exceed 1.12x'
   const long = clipTiming(10, 25, 6);
   assert.ok(long.playbackRate <= 1.12);
   assert.ok(Math.abs(sourceTime(long, 6) - (10 + 6 * 1.12)) < 1e-9);
+});
+
+test('detail framing waits for the observed incoming view and permits stronger small-control closeups', () => {
+  const layout = demoLayout(1920, 1080);
+  const detail = { ...state, duration: 7, focusRevealAt: 2.4, focus: { x: 0.8, y: 0.15, zoom: 2.15 }, focusArea: { x: 0.72, y: 0.10, width: 0.16, height: 0.10 } };
+  const keys = cameraKeys(detail, 210, layout);
+  for (let frame = 0; frame <= 72; frame += 1) assert.deepEqual(cameraForFrame(keys, frame), { x: 0.5, y: 0.5, zoom: 1 });
+  assert.ok(cameraForFrame(keys, 180).zoom > 2.1);
+  const late = cameraKeys({ ...detail, focusRevealAt: 6.8 }, 210, layout);
+  assert.equal(cameraForFrame(late, 209).zoom, 1, 'Do not rush a closeup when the view has barely settled.');
 });
 
 test('camera interpolation and projected pointer are continuous and correctly registered', () => {

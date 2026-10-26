@@ -10,11 +10,13 @@ export interface FilmState {
   progress: number;
   totalProgress: number;
   time: number;
+  duration?: number;
   subtitle?: string;
   subtitleWord?: number;
   motion?: 'cinematic' | 'subtle';
   focus?: { x: number; y: number; zoom: number };
   focusArea?: PrivacyMask;
+  focusRevealAt?: number;
   visualModel?: ProductVisualModel;
   cursor?: { x: number; y: number; click?: boolean };
 }

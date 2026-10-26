@@ -19,6 +19,13 @@ const activeDirectories = new Set<string>();
 type RenderOptions = { signal?: AbortSignal; onProgress?: (progress: number, message: string) => void };
 type TimedScene = Scene & { duration: number; frames: number };
 
+/** Compose each format natively; the screen walkthrough always stays landscape. */
+export function outputDimensions(project: Pick<Project, 'brief'|'renderSettings'>, kind: OutputKind): {width:number;height:number} {
+  const width=project.brief.resolution==='1080p'?1920:1280;
+  const height=project.brief.resolution==='1080p'?1080:720;
+  return kind==='promo'&&project.renderSettings?.promoAspect==='portrait'?{width:height,height:width}:{width,height};
+}
+
 function executable(): string {
   return process.env.FFMPEG_PATH || ffmpegStatic || 'ffmpeg';
 }
@@ -182,8 +189,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
   aborted(options.signal);
   if (!ffmpegAvailable()) throw new Error('FFmpeg is unavailable. Install dependencies or set FFMPEG_PATH to a local executable.');
   const scenes = timeline(project.scenes);
-  const width = project.brief.resolution === '1080p' ? 1920 : 1280;
-  const height = project.brief.resolution === '1080p' ? 1080 : 720;
+  const initialSize = outputDimensions(project, selected[0]);
   const duration = scenes.reduce((sum, scene) => sum + scene.duration, 0);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const renderDirectory = await realpath(directory);
@@ -207,8 +213,8 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       return {
         name: safeText(project.brief.name, 80), title: safeText(scene.title, 160), caption: safeText(scene.caption, 360),
         feature: safeText(scene.feature || `Chapter ${String(index + 1).padStart(2, '0')}`, 100), url: humanUrl(project.brief.url),
-        scene: index, scenes: scenes.length, progress, totalProgress: (totalFrame + 0.5) / totalFrames, time,
-        motion: settings.motion, focus: scene.focus, focusArea: scene.focusArea, visualModel: scene.visualModel,
+        scene: index, scenes: scenes.length, progress, totalProgress: (totalFrame + 0.5) / totalFrames, time, duration:scene.duration,
+        motion: settings.motion, focus: scene.focus, focusArea: scene.focusArea, focusRevealAt:scene.focusRevealAt, visualModel: scene.visualModel,
         ...(settings.subtitles ? subtitleAt(cues, time) : { subtitle: '', subtitleWord: -1 }),
       };
     };
@@ -216,7 +222,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     abortBrowser = () => { void browser?.close().catch(() => {}); };
     options.signal?.addEventListener('abort', abortBrowser, { once: true });
     aborted(options.signal);
-    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+    const context = await browser.newContext({ viewport: initialSize, deviceScaleFactor: 1, reducedMotion: 'reduce' });
     const page = await context.newPage();
     // Rendering is offline; neither film can fetch network assets.
     await page.route('**/*', route => route.abort());
@@ -225,6 +231,8 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     const finished: { temporary: string; output: string }[] = [];
     for (let index = 0; index < selected.length; index += 1) {
       const kind = selected[index];
+      const {width,height}=outputDimensions(project,kind);
+      await page.setViewportSize({width,height});
       const update = (progress: number, message: string) => options.onProgress?.(Math.min(99, Math.round((index + progress) / selected.length * 99)), message);
       let file = kind === 'demo'
         ? await renderDynamicDemo({ project, directory, temporary, scenes, page, width, height, fps: FPS,
@@ -240,8 +248,9 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       const relative = `${kind}.mp4`;
       const poster = `${kind}-poster.jpg`;
       const posterFile = path.join(temporary, poster);
+      const posterTime = kind==='promo'&&scenes.length>1 ? scenes[0].duration+scenes[1].duration/2 : Math.min(3,duration/2);
       await runEncoder([
-        '-ss', String(Math.min(3, duration / 2)), '-i', file,
+        '-ss', String(posterTime), '-i', file,
         '-frames:v', '1', '-q:v', '2', posterFile,
       ], options.signal);
       aborted(options.signal);

@@ -29,6 +29,10 @@ test('shot direction uses only the selected contained screenshot with strict no-
     return good;
   } } as unknown as LocalAI;
   assert.deepEqual(await directShot(scene, shot, directory, ai, controller.signal), good); assert.equal(called, 1);
+  const detail={focusArea:{x:.4,y:.15,width:.2,height:.1},focus:{x:.5,y:.2,zoom:2.2}};
+  assert.deepEqual(await directShot(scene,shot,directory,{json:async()=>detail} as unknown as LocalAI,controller.signal),detail);
+  const overview={...good,focus:{...good.focus,zoom:1}};
+  assert.deepEqual(await directShot(scene,shot,directory,{json:async()=>overview} as unknown as LocalAI,controller.signal),overview);
 }));
 
 test('invalid ROI, focal point, extra fields and inference failure preserve the measured stable fallback', async () => fixture(async directory => {
