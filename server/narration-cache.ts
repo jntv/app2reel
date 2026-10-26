@@ -120,7 +120,7 @@ export async function readPreparedNarration(scenes: readonly SpeechScene[], opti
     if (!timingBytes || !wav) return undefined;
     const metadata = JSON.parse(timingBytes.toString('utf8'));
     const expected = identity(options), normalized = speechScenes(scenes);
-    if (!metadata || metadata.fingerprint !== narrationFingerprint(scenes, options) || metadata.voice !== expected.voice || metadata.provider !== expected.provider) return undefined;
+    if (!metadata || metadata.fingerprint !== narrationFingerprint(scenes, options) || metadata.voice !== expected.voice || metadata.provider !== expected.provider || metadata.recipe !== expected.recipe) return undefined;
     const duration = wavPcm(wav)?.duration, seconds = normalized.reduce((sum, scene) => sum + scene.frames / 30, 0);
     if (duration === undefined || Math.abs(duration - seconds) > .001) return undefined;
     const cues = coherentCues(metadata.cues, normalized);
@@ -157,7 +157,7 @@ export async function retimePreparedNarration(previousScenes:readonly SpeechScen
     const [timingBytes,wav]=await Promise.all([boundedFile(source,`${prefix}narration-timing.json`,1024*1024),boundedFile(source,`${prefix}narration.wav`,180*RATE*2+65536)]);
     if(!timingBytes||!wav)throw new Error('The approved narration files are unavailable.');
     const metadata=JSON.parse(timingBytes.toString('utf8')),expected=identity(options),sourceFingerprint=narrationFingerprint(previousScenes,options);
-    if(!metadata||metadata.fingerprint!==sourceFingerprint||metadata.voice!==expected.voice||metadata.provider!==expected.provider)throw new Error('Approved narration does not match the reviewed source clock and voice.');
+    if(!metadata||metadata.fingerprint!==sourceFingerprint||metadata.voice!==expected.voice||metadata.provider!==expected.provider||metadata.recipe!==expected.recipe)throw new Error('Approved narration does not match the reviewed source clock and voice.');
     const format=wavPcm(wav),sourceCues=coherentCues(metadata.cues,previous),oldSamples=previous.reduce((sum,scene)=>sum+scene.frames*RATE/30,0);
     if(!format||format.length!==oldSamples*2||!sourceCues)throw new Error('The approved narration waveform or word clock is invalid.');
     const alignments=metadata.alignments;

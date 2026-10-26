@@ -4,6 +4,7 @@ import {mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile} from 'node:f
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {narrationFingerprint, readPreparedNarration, retimePreparedNarration} from '../server/narration-cache.js';
+import {naturalVoiceIdentity} from '../server/local-voice.js';
 
 const scenes = [{narration:'Hello, team.',caption:'Ignored',duration:1},{narration:'Keep work clear.',caption:'',duration:1}];
 const cues = [
@@ -173,5 +174,17 @@ test('approved-take retiming rejects changed words, wrong clocks, clipped words 
     await assert.rejects(retimePreparedNarration(previous,next,{},source,target,'demo'));
     await assert.rejects(readFile(path.join(target,'narration.wav')),/ENOENT/);
     if(mode==='occupied staging')assert.equal(await readFile(path.join(target,'narration-timing.json'),'utf8'),'keep this');
+  }));
+});
+
+test('cache reuse and approved-take retiming reject a contradictory designed-voice recipe',async t=>{
+  for(const recipe of [undefined,'0'.repeat(64)])await t.test(recipe?'wrong recipe':'missing recipe',async()=>retimingFixture(async(source,target,previous,next,metadata)=>{
+    const options={engine:'natural' as const,voice:'qwen_indian_female'};
+    Object.assign(metadata,{fingerprint:narrationFingerprint(previous,options),voice:options.voice,...naturalVoiceIdentity(options.voice)});
+    metadata.recipe=recipe;
+    await writeFile(path.join(source,'demo-narration-timing.json'),JSON.stringify(metadata));
+    assert.equal(await readPreparedNarration(previous,options,source,target,'demo'),undefined);
+    await assert.rejects(retimePreparedNarration(previous,next,options,source,target,'demo'),/reviewed source clock and voice/);
+    await assert.rejects(readFile(path.join(target,'narration.wav')),/ENOENT/);
   }));
 });
