@@ -32,11 +32,12 @@ jobs:
       - name: Bound package downloads and use the main Ubuntu mirror
         run: |
           sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-          sudo tee /etc/apt/apt.conf.d/80app2reel-ci >/dev/null <<'APT'
+          sudo tee /etc/apt/apt.conf.d/zzzz-app2reel-ci >/dev/null <<'APT'
           Acquire::Retries "2";
           Acquire::http::Timeout "30";
           Acquire::https::Timeout "30";
           APT
+          apt-config shell app2reel_retries Acquire::Retries app2reel_http_timeout Acquire::http::Timeout app2reel_https_timeout Acquire::https::Timeout
       - name: Install browser and Linux dependencies
         run: pnpm exec playwright install --with-deps chromium
       - name: Install system narration for speech integration tests
