@@ -1,0 +1,19 @@
+erp:
+  workspace_slug: ""
+  project_id: ""
+repository:
+  provider: "local"
+  external_id: ""
+  default_branch: "unknown"
+documents:
+  product: "project-context/product.md"
+  technical_design: "project-context/technical-design.md"
+  api_contracts: "project-context/api-contracts.md"
+review:
+  commands:
+    - command: "pnpm test"
+      working_directory: "."
+      verified: true
+    - command: "pnpm run build"
+      working_directory: "."
+      verified: true
