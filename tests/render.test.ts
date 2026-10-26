@@ -72,5 +72,19 @@ test('narrated film contains a real spoken track and exports its audible timing'
     const audio=spawnSync(ffmpeg!,['-v','error','-i',path.join(directory,'promo.mp4'),'-vn','-ar','16000','-ac','1','-f','s16le','pipe:1']);
     assert.equal(audio.status,0,audio.stderr.toString());let energy=0;for(let i=0;i<audio.stdout.length;i+=2)energy+=(audio.stdout.readInt16LE(i)/32768)**2;
     assert.ok(Math.sqrt(energy/(audio.stdout.length/2))>.025,'The exported film must contain audible narration, not only the quiet music bed.');
+    const voice=await readFile(path.join(directory,'narration.wav')),metadata=await readFile(path.join(directory,'narration-timing.json')),captions=await readFile(path.join(directory,'captions.srt'));
+    // A second completed film shares this exact take; visual-only rerenders must
+    // reuse it instead of creating a new stochastic voice/caption clock.
+    project.outputs=[{...output,kind:'demo'}];project.scenes[0].focus={x:.4,y:.3,zoom:1.5};
+    const messages:string[]=[];
+    await renderVideos(project,directory,['promo'],{onProgress:(_p,message)=>messages.push(message)});
+    assert.ok(messages.some(message=>message.includes('Reusing the reviewed narration')));
+    assert.deepEqual(await readFile(path.join(directory,'narration.wav')),voice);
+    assert.deepEqual(await readFile(path.join(directory,'narration-timing.json')),metadata);
+    assert.deepEqual(await readFile(path.join(directory,'captions.srt')),captions);
+    project.scenes[0].duration=2.1;
+    await assert.rejects(renderVideos(project,directory,['promo']),/Render both films/);
+    assert.deepEqual(await readFile(path.join(directory,'narration.wav')),voice);
+    assert.deepEqual(await readFile(path.join(directory,'captions.srt')),captions);
   }finally{await rm(directory,{recursive:true,force:true});}
 });

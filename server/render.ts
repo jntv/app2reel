@@ -11,6 +11,7 @@ import { promoTemplate } from './promo-template.js';
 import { renderDynamicDemo } from './demo-renderer.js';
 import { subtitleAt, subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
 import { prepareNarration } from './narration.js';
+import { readPreparedNarration } from './narration-cache.js';
 import { productFontCss, resolveFilmTheme } from './film-theme.js';
 
 const FPS = 30;
@@ -206,7 +207,12 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     options.onProgress?.(0, 'Preparing local video assets');
     const settings = { ...DEFAULT_RENDER_SETTINGS, ...project.renderSettings };
     const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
-    const narration=settings.narration!==false?await prepareNarration(scenes,temporary,runEncoder,options.signal,{engine:settings.narrationEngine,voice:settings.narrationVoice}):undefined;
+    const voiceOptions={engine:settings.narrationEngine,voice:settings.narrationVoice};
+    const preservedNarrated=project.outputs.some(output=>!selected.includes(output.kind)&&output.narrated);
+    const reusable=settings.narration!==false?await readPreparedNarration(scenes,voiceOptions,directory,temporary):undefined;
+    if(preservedNarrated&&(!reusable||settings.narration===false))throw new Error('Render both films to update the shared voice and captions together.');
+    if(reusable)options.onProgress?.(0,'Reusing the reviewed narration and word timing');
+    const narration=settings.narration!==false?reusable||await prepareNarration(scenes,temporary,runEncoder,options.signal,voiceOptions):undefined;
     const cues = narration?.cues||subtitleCues(scenes);
     const stateAt = (index: number, progress: number, totalFrame: number): FilmState => {
       const scene = scenes[index];

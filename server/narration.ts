@@ -6,6 +6,7 @@ import type { Scene } from '../shared/types.js';
 import { subtitleCues, type SubtitleCue } from './subtitles.js';
 import { synthesizeNaturalVoice } from './local-voice.js';
 import { alignVoiceWords } from './voice-alignment.js';
+import { narrationFingerprint } from './narration-cache.js';
 
 export interface NarrationEngine { command: string; voice: string; provider: 'macOS'|'eSpeak'; }
 export interface NarrationTrack { file: string; cues: SubtitleCue[]; voice: string; }
@@ -89,6 +90,6 @@ export async function prepareNarration(scenes:readonly Scene[],directory:string,
   const file=path.join(directory,'narration.wav');
   await runEncoder(['-f','concat','-safe','1','-i',list,'-ar','48000','-ac','1','-c:a','pcm_s16le',file],signal);
   const voice=natural?options.voice||'melo_india':engine!.voice;
-  await writeFile(path.join(directory,'narration-timing.json'),JSON.stringify({voice,provider:natural?voice==='melo_india'?'MeloTTS ONNX':'Kokoro ONNX':engine!.provider,alignments,cues},null,2));
+  await writeFile(path.join(directory,'narration-timing.json'),JSON.stringify({fingerprint:narrationFingerprint(scenes,{engine:natural?'natural':'system',voice:options.voice}),voice,provider:natural?voice==='melo_india'?'MeloTTS ONNX':'Kokoro ONNX':engine!.provider,alignments,cues},null,2));
   return {file,cues,voice};
 }
