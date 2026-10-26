@@ -14,8 +14,8 @@ export interface ProductTheme {
 export interface ProductVisualModel { heading?: string; labels: string[]; layout: 'dashboard'|'table'|'calendar'|'form'|'analytics'|'workspace'; accent?: string; }
 export interface CursorSample { at: number; x: number; y: number; kind: 'move'|'click'|'type'; }
 export type NarrationVoice='melo_india'|'af_heart'|'am_michael'|'qwen_indian_male'|'qwen_indian_female';
-export interface RenderSettings { motion: 'cinematic'|'subtle'; subtitles: boolean; cursorHighlights: boolean; narration?: boolean; narrationEngine?: 'natural'|'system'; narrationVoice?: NarrationVoice; themeSource?: 'product'|'custom'; promoAspect?: 'landscape'|'portrait'; }
-export const DEFAULT_RENDER_SETTINGS: RenderSettings = { motion: 'cinematic', subtitles: true, cursorHighlights: true, narration: true, narrationEngine:'natural', narrationVoice:'melo_india', themeSource: 'product', promoAspect: 'landscape' };
+export interface RenderSettings { motion: 'cinematic'|'subtle'; subtitles: boolean; cursorHighlights: boolean; narration?: boolean; narrationEngine?: 'natural'|'system'; narrationVoice?: NarrationVoice; backgroundMusic?: boolean; musicVolume?: number; themeSource?: 'product'|'custom'; promoAspect?: 'landscape'|'portrait'; }
+export const DEFAULT_RENDER_SETTINGS: RenderSettings = { motion: 'cinematic', subtitles: true, cursorHighlights: true, narration: true, narrationEngine:'natural', narrationVoice:'melo_india', backgroundMusic:true, musicVolume:.24, themeSource: 'product', promoAspect: 'landscape' };
 export interface NarrationStatus { naturalReady:boolean; systemReady:boolean; state:'missing'|'installing'|'ready'|'failed'; message:string; progress?:number; voices:{id:string;label:string;ready:boolean}[]; }
 export interface EditCamera { contextHold: number; moveDuration: number; releaseDuration: number; }
 /** Outgoing transition, centered on the boundary without shortening either film. */
@@ -26,7 +26,7 @@ export interface Source { title: string; url: string; summary: string; }
 export interface Finding { feature: string; status: 'observed'|'not-observed'; evidence: string; screenshot?: string; }
 export interface Shot { id: string; title: string; url: string; screenshot: string; at: number; action?: string; visualModel?: ProductVisualModel; focusArea?: PrivacyMask; entryStart?:number; entrySettled?:number; actionStart?:number; actionEnd?:number; }
 export interface LogEntry { time: string; message: string; level: 'info'|'warn'|'error'; }
-export interface VideoOutput { kind: OutputKind; file: string; poster?: string; width: number; height: number; fps: number; duration: number; narrated?: boolean; revision?: string; }
+export interface VideoOutput { kind: OutputKind; file: string; poster?: string; width: number; height: number; fps: number; duration: number; narrated?: boolean; backgroundMusic?: boolean; musicVolume?: number; revision?: string; }
 export interface Project {
   id: string; brief: Brief; createdAt: string; updatedAt: string; stage: Stage; progress: number;
   message: string; logs: LogEntry[]; sources: Source[]; findings: Finding[]; shots: Shot[];

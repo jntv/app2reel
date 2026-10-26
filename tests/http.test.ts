@@ -48,6 +48,12 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   const mediaType=await fetch(base+'/api/sample',{method:'POST',headers:{'content-type':'text/plain'},body:'{}'});assert.equal(mediaType.status,415);
   // Fetch normalizes Host on recent Node versions; use a raw HTTP request for the rebinding case.
   const wrongHost=await new Promise<number|undefined>((resolve,reject)=>{const req=httpGet(base+'/api/projects',{headers:{host:`hostile.example:${port}`}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);});assert.equal(wrongHost,403);
+  for(const body of [{enabled:true,volume:-.01},{enabled:true,volume:.51},{enabled:true,volume:.24,path:'/tmp/arbitrary.wav'}]){
+    const invalidMusic=await fetch(`${base}/api/projects/${p.id}/music`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    assert.equal(invalidMusic.status,400,'Music updates accept only bounded levels and cannot import an arbitrary file.');
+  }
+  const unchangedAfterMusic=await(await fetch(`${base}/api/projects/${p.id}`)).json();
+  assert.deepEqual(unchangedAfterMusic.outputs,p.outputs,'Rejected music settings must leave completed films available.');
   const invalidFocus=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],focus:{x:1.5,y:.5,zoom:1.6}}]})});
   assert.equal(invalidFocus.status,400);
   const invalidMask=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],redactions:[{x:.8,y:.1,width:.3,height:.4}]}]})});
@@ -70,6 +76,8 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   assert.equal(lengthOnly.status,200);assert.equal((await lengthOnly.json()).scenes[0].duration,5,'Saving film length targets must retain captured product evidence.');
   const resized=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({brief:{resolution:'720p'}})});
   assert.equal(resized.status,200);const resizedProject=await resized.json();assert.equal(resizedProject.scenes.length,1);assert.deepEqual(resizedProject.outputs,[],'Resolution changes retain the reviewed scenes but invalidate exports of the old size.');
+  const musicWithoutFilm=await fetch(`${base}/api/projects/${p.id}/music`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:true,volume:.24})});
+  assert.equal(musicWithoutFilm.status,400,'Music-only updates need a completed picture master.');
   const styled=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({renderSettings:{motion:'subtle',subtitles:false,cursorHighlights:false}})});
   assert.equal(styled.status,200);const styledProject=await styled.json();
   assert.deepEqual(styledProject.renderSettings,{motion:'subtle',subtitles:false,cursorHighlights:false});

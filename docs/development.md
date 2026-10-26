@@ -32,6 +32,7 @@ The pnpm lockfile is canonical. npm is supported for local installation but does
 | `server/promo-template.ts` | Graphics promo rendering. |
 | `server/product-theme.ts` | Product design extraction. |
 | `server/narration.ts` | Speech generation and fitting. |
+| `server/brand-music.ts`, `server/audio-mix.ts` | Original local stereo score, speech-driven music ducking, and soundtrack muxing. |
 | `server/local-voice.ts` | Isolated Python speech runtime bridge. |
 | `server/voice-alignment.ts` | Spoken-word alignment. |
 | `server/subtitles.ts` | Shared subtitle cue timeline. |
@@ -48,6 +49,12 @@ The pnpm lockfile is canonical. npm is supported for local installation but does
 `Project.filmPlans.demo` and `.promo` have independent scenes, durations, narration, captions and caches. A visual or script edit to one plan preserves the other completed film. New renders publish film-specific files such as `demo-narration.wav`, `promo-narration.wav` and `promo-captions.vtt`. Older projects with only `scenes` keep the shared-timeline behavior until replanned. Legacy shared-timeline projects require both films to be rendered together if their shared narration track is missing or no longer matches.
 
 The maximum is 20 scenes and 180 seconds per rendered film; the motion-film planner accepts targets up to 90 seconds. The renderer rejects excess duration rather than silently truncating it. An edit plan can reframe captured material but cannot create missing interactions. Short recordings hold their last real frame, and a longer duration does not establish extra feature coverage.
+
+## Soundtrack updates
+
+Music is an original deterministic 48 kHz stereo PCM score generated offline. The walkthrough and promo use distinct arrangements with extended chords, warm keys/pads, soft bass and sparse plucks. Music gain is independent of narration; a sidechain compressor keyed by the original mono speech lowers only the music. The final limiter disables automatic makeup gain and compensates lookahead latency to retain the subtitle clock.
+
+`POST /api/projects/:id/music` accepts `{enabled:boolean, volume:number}` with volume bounded to 0–0.5. It takes the global cancellable job lock and validates each completed film's duration and original narration cache. It builds replacement audio from that cache and a fresh score, ignoring the MP4's previous mixed audio, while copying video packets unchanged. All replacements are staged before publication; fresh output revisions refresh browser playback. Voice, caption, timing and poster files remain unchanged. Missing or mismatched speech requires a full render rather than a silent fallback or a new voice take.
 
 ## Verification
 

@@ -118,6 +118,10 @@ app.post('/api/projects/:id/render',asyncRoute(async(req,res)=>{
   const {kinds}=z.object({kinds:z.array(z.enum(['demo','promo'])).min(1).max(2)}).strict().parse(req.body);
   const p=store.get(String(req.params.id));await pipeline.render(p,[...new Set(kinds)]);res.status(202).json(p);
 }));
+app.post('/api/projects/:id/music',asyncRoute(async(req,res)=>{
+  const body=z.object({enabled:z.boolean(),volume:z.number().min(0).max(.5)}).strict().parse(req.body);
+  const p=store.get(String(req.params.id));await pipeline.music(p,body);res.status(202).json(p);
+}));
 app.post('/api/projects/:id/cancel',asyncRoute(async(req,res)=>{const p=store.get(String(req.params.id));pipeline.cancel(p.id);res.json({message:'Cancellation requested.'});}));
 app.get('/api/projects/:id/events',(req,res,next)=>{
   try{

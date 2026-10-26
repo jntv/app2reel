@@ -29,7 +29,6 @@ export interface DynamicDemoOptions {
   encoder: (args: string[], signal?: AbortSignal) => Encoder;
   runEncoder: (args: string[], signal?: AbortSignal) => Promise<void>;
   encodingOptions: () => string[];
-  soundtrack?: (duration: number) => string;
   theme?: ProductTheme;
   fontCss?: string;
 }
@@ -141,22 +140,18 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
   await writeFile(list, segments.map((_, i) => `file 'demo-scene-${i}.mp4'`).join('\n'), 'utf8');
   const duration = totalFrames / fps;
   const output = path.join(temporary, 'demo.mp4');
-  // Original quiet pulse and harmonics. No fetched or licensed third-party media.
-  const sound = options.soundtrack?.(duration) || `aevalsrc='(0.021*sin(2*PI*130.8128*t)+0.012*sin(2*PI*196*t)+0.009*sin(2*PI*261.6256*t))*(0.78+0.22*sin(2*PI*.125*t))+0.018*sin(2*PI*55*t)*exp(-22*mod(t,.5))':s=48000:d=${duration}`;
   if (segments.length === 1) {
     await runEncoder([
-      '-f', 'concat', '-safe', '1', '-i', list, '-f', 'lavfi', '-i', sound,
-      '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
-      '-af', `afade=t=in:d=0.8,afade=t=out:st=${Math.max(0, duration - 1.5)}:d=1.5`, '-t', String(duration), '-movflags', '+faststart', output,
+      '-f', 'concat', '-safe', '1', '-i', list,
+      '-map', '0:v:0', '-an', '-c:v', 'copy', '-t', String(duration), '-movflags', '+faststart', output,
     ], signal);
   } else {
     // Extend only the boundary stills, then overlap them. Original scene/narration
     // clocks remain unchanged: no 0.2-second shortening at every edit.
     const {filters,label}=transitionFilter(scenes,fps);
     await runEncoder([
-      '-filter_complex_threads', '2', ...segments.flatMap(file => ['-i', file]), '-f', 'lavfi', '-i', sound,
-      '-filter_complex', filters.join(';'), '-map', `[${label}]`, '-map', `${segments.length}:a:0`, ...encodingOptions(),
-      '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-af', `afade=t=in:d=0.8,afade=t=out:st=${Math.max(0, duration - 1.5)}:d=1.5`, '-t', String(duration), output,
+      '-filter_complex_threads', '2', ...segments.flatMap(file => ['-i', file]),
+      '-filter_complex', filters.join(';'), '-map', `[${label}]`, '-an', ...encodingOptions(), '-t', String(duration), output,
     ], signal);
   }
   return output;

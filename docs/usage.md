@@ -25,9 +25,15 @@ For a first run without Python or model downloads, go to **Your films**, turn **
 | `demo.mp4` | Actual browser footage in a large rounded product window, selective held close-ups, visible pointer, feature outlines, dark word-highlighted caption panels, voiceover, and quiet music. |
 | `promo.mp4` | Product-inspired interface models with changing states, kinetic headline beats, directional transitions, narrated word highlights, and a branded ending. Landscape or native portrait composition. |
 
-Both use H.264 at 30 fps with AAC audio. By default they include local speech over a quiet synthesized music bed. Spoken narration can be disabled in the saved film style. Rendering both films frame by frame can take several minutes. Captured browser footage is recorded by Playwright and recompressed; a 1080p export cannot restore detail absent from the source recording.
+Both use H.264 at 30 fps with AAC audio. By default they include local speech over a restrained original instrumental score. Spoken narration and background music can be disabled independently. Rendering both films frame by frame can take several minutes. Captured browser footage is recorded by Playwright and recompressed; a 1080p export cannot restore detail absent from the source recording.
 
 Use **Cinematic** for stronger movement or **Subtle** for gentler camera and graphic motion. Save style changes before rendering; changing style or focus preserves the captured footage. Review the storyboard and final cuts for your product's creative direction.
+
+### Background music
+
+The original score uses warm keys, layered pads, soft bass and sparse plucks, with a calmer walkthrough arrangement and a gently moving promo arrangement. It is synthesized locally without downloading music or requiring another account. Music fades in, resolves softly at the end, and automatically lowers beneath narration.
+
+In **Your films**, use **Background music** and **Music level** to choose **Very subtle**, **Subtle** (default), or **Warm**. When music is the only style change and finished films exist, **Update music** refreshes their audio without rerendering pictures or regenerating speech. The exact video stream, reviewed voice, captions, and film lengths are preserved. If the matching original voice track is missing or changed, render the films again first.
 
 ### Walkthrough footage and camera
 

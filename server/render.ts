@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
@@ -14,6 +14,7 @@ import { prepareNarration } from './narration.js';
 import { readPreparedNarration } from './narration-cache.js';
 import { productFontCss, resolveFilmTheme } from './film-theme.js';
 import {transitionFilter} from './demo-motion.js';
+import {mixFilmAudio} from './audio-mix.js';
 
 const FPS = 30;
 const MAX_SECONDS = 180;
@@ -120,15 +121,6 @@ function encodingOptions(): string[] {
   return ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-movflags', '+faststart'];
 }
 
-/** Original 120 BPM ambient pulse, synthesized offline without fetched audio. */
-function soundtrack(duration: number): string {
-  const pad='0.022*(sin(2*PI*130.8128*t)+0.5*sin(2*PI*196*t)+0.35*sin(2*PI*261.6256*t))*(0.7+0.3*sin(2*PI*0.125*t))';
-  const kick='0.075*sin(2*PI*(52*t+3*(1-exp(-28*mod(t,0.5)))))*exp(-22*mod(t,0.5))';
-  const bass='0.028*sin(2*PI*65.4064*t)*exp(-5*mod(t,0.5))';
-  const hats='0.007*sin(2*PI*6301*t)*sin(2*PI*8111*t)*exp(-100*mod(t,0.25))';
-  return `aevalsrc='${pad}+${kick}+${bass}+${hats}':s=48000:d=${duration}`;
-}
-
 async function writeNarration(directory: string, scenes: TimedScene[], cues=subtitleCues(scenes)): Promise<void> {
   await Promise.all([
     writeFile(path.join(directory, 'narration.srt'), subtitleSrt(cues), 'utf8'),
@@ -174,7 +166,7 @@ async function renderPromo(
   }
   aborted(signal);
   const {filters,label}=transitionFilter(scenes,FPS);
-  await runEncoder(['-filter_complex_threads','2',...segments.flatMap(file=>['-i',file]),'-f','lavfi','-i',soundtrack(duration),'-filter_complex',filters.join(';'),'-map',`[${label}]`,'-map',`${segments.length}:a:0`,...encodingOptions(),'-c:a','aac','-b:a','128k','-ac','2','-af',`afade=t=in:d=1,afade=t=out:st=${Math.max(0,duration-1.5)}:d=1.5`,'-t',String(duration),output],signal);
+  await runEncoder(['-filter_complex_threads','2',...segments.flatMap(file=>['-i',file]),'-filter_complex',filters.join(';'),'-map',`[${label}]`,'-an',...encodingOptions(),'-t',String(duration),output],signal);
   return output;
 }
 
@@ -235,14 +227,12 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       let file = kind === 'demo'
         ? await renderDynamicDemo({ project, directory, temporary:work, scenes, page, width, height, fps: FPS,
           recording: await containedFile(directory, project.recording || ''), update, signal: options.signal, stateAt,
-          encoder, runEncoder, encodingOptions, soundtrack, theme:resolveFilmTheme(project),fontCss })
+          encoder, runEncoder, encodingOptions, theme:resolveFilmTheme(project),fontCss })
         : await renderPromo(project, work, scenes, stateAt, page, width, height, update, options.signal,fontCss);
       aborted(options.signal);
-      if(narration){
-        const narrated=path.join(work,`${kind}-narrated.mp4`);
-        await runEncoder(['-i',file,'-i',narration.file,'-f','lavfi','-i',soundtrack(duration),'-filter_complex',`[2:a]volume=0.18,afade=t=in:d=0.7,afade=t=out:st=${Math.max(0,duration-1)}:d=1[music];[1:a][music]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[audio]`,'-map','0:v:0','-map','[audio]','-c:v','copy','-c:a','aac','-b:a','192k','-ac','2','-t',String(duration),'-movflags','+faststart',narrated],options.signal);
-        file=narrated;
-      }
+      const mixed=path.join(work,`${kind}-mixed.mp4`);
+      await mixFilmAudio({video:file,output:mixed,temporary:work,duration,kind,settings,narration:narration?.file,runEncoder,signal:options.signal});
+      file=mixed;
       const relative = `${kind}.mp4`;
       const poster = `${kind}-poster.jpg`;
       const posterFile = path.join(work, poster);
@@ -254,7 +244,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       aborted(options.signal);
       finished.push({ temporary: file, output: path.join(directory, relative) });
       finished.push({ temporary: posterFile, output: path.join(directory, poster) });
-      outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration, narrated:!!narration, revision:randomUUID() });
+      outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration, narrated:!!narration, backgroundMusic:settings.backgroundMusic!==false&&(settings.musicVolume??.24)>0, musicVolume:settings.musicVolume, revision:randomUUID() });
       if(independent){
         await writeNarration(work,scenes,cues);
         const assets=['narration.srt','narration.txt','captions.srt','captions.vtt',...(narration?['narration.wav','narration-timing.json']:[])];
@@ -278,5 +268,48 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     await browser?.close().catch(() => {});
     activeDirectories.delete(renderDirectory);
     await rm(temporary, { recursive: true, force: true });
+  }
+}
+
+/** Refresh the finished soundtrack from original speech, retaining exact video packets. */
+export async function remixSoundtracks(project:Project,directory:string,music:{enabled:boolean;volume:number},options:RenderOptions={}):Promise<VideoOutput[]> {
+  if(!project.outputs.length)throw new Error('Render a film before updating its music.');
+  if(!Number.isFinite(music.volume)||music.volume<0||music.volume>.5)throw new Error('Choose a music level between 0 and 0.5.');
+  if(!ffmpegAvailable())throw new Error('FFmpeg is unavailable.');
+  const root=await realpath(directory);
+  if(activeDirectories.has(root))throw new Error('This project is already rendering videos.');
+  activeDirectories.add(root);
+  const temporary=await mkdtemp(path.join(root,'.audio-')).catch(error=>{activeDirectories.delete(root);throw error;});
+  const staged:{file:string;target:string;backup:string}[]=[];
+  try{
+    const settings={...DEFAULT_RENDER_SETTINGS,...project.renderSettings,backgroundMusic:music.enabled,musicVolume:music.volume};
+    const outputs:VideoOutput[]=[];
+    for(let index=0;index<project.outputs.length;index++){
+      aborted(options.signal);
+      const previous=project.outputs[index],kind=previous.kind;
+      if(!['demo','promo'].includes(kind)||outputs.some(output=>output.kind===kind))throw new Error('Invalid completed film list.');
+      const scenes=renderTimeline(project.filmPlans?.[kind]?.scenes??project.scenes);
+      const duration=scenes.reduce((sum,scene)=>sum+scene.frames,0)/FPS;
+      if(Math.abs(duration-previous.duration)>1e-6||Boolean(previous.narrated)!==(settings.narration!==false))throw new Error('Render the films to apply storyboard or narration changes before updating music.');
+      const work=path.join(temporary,kind);await mkdir(work);
+      const voice=previous.narrated?await readPreparedNarration(scenes,{engine:settings.narrationEngine,voice:settings.narrationVoice},root,work,project.filmPlans?kind:undefined):undefined;
+      if(previous.narrated&&!voice)throw new Error('The reviewed voice track is missing or changed. Render both films before updating music.');
+      const source=await containedFile(root,previous.file),file=path.join(work,`${kind}-mixed.mp4`);
+      options.onProgress?.(Math.round(index/project.outputs.length*90),`Updating ${kind==='demo'?'walkthrough':'motion film'} music beneath the original narration`);
+      await mixFilmAudio({video:source,output:file,temporary:work,duration,kind,settings,narration:voice?.file,runEncoder,signal:options.signal});
+      staged.push({file,target:source,backup:path.join(work,'previous.mp4')});
+      outputs.push({...previous,backgroundMusic:music.enabled&&music.volume>0,musicVolume:music.volume,revision:randomUUID()});
+    }
+    aborted(options.signal);
+    // Keep rollback bytes until every staged film is committed. Voice/caption/
+    // poster files and earlier export bundles are never rewritten by this job.
+    for(const item of staged)await copyFile(item.target,item.backup);
+    try{for(const item of staged)await rename(item.file,item.target);}
+    catch(error){for(const item of staged)await copyFile(item.backup,item.target);throw error;}
+    options.onProgress?.(100,'Music updated');
+    return outputs;
+  }finally{
+    activeDirectories.delete(root);
+    await rm(temporary,{recursive:true,force:true});
   }
 }

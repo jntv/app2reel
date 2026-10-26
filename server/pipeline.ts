@@ -1,10 +1,11 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Project, Scene, Source, OutputKind } from '../shared/types.js';
+import {DEFAULT_RENDER_SETTINGS} from '../shared/types.js';
 import { Store } from './store.js';
 import { LocalAI } from './ai.js';
 import { cleanURL, exploreBrowser, type Credentials } from './browser.js';
-import { renderVideos } from './render.js';
+import { renderVideos,remixSoundtracks } from './render.js';
 import { subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
 import { refreshProductDesign, refineThemeFromScreenshots } from './product-theme.js';
 import { directShot } from './shot-direction.js';
@@ -121,11 +122,30 @@ Return ${Math.min(3,p.shots.length)} to ${Math.min(16,p.shots.length)} distinct 
       p.outputs=[...p.outputs.filter(o=>!kinds.includes(o.kind)),...outputs];p.stage='complete';p.progress=100;await this.store.log(p,'Your films are ready to preview and download.');
     });
   }
+  async music(p:Project,music:{enabled:boolean;volume:number}){
+    this.assertIdle();
+    if(!p.outputs.length)throw new Error('Render a film before updating its music.');
+    await this.start(p,async signal=>{
+      p.stage='rendering';p.progress=0;p.error=undefined;
+      await this.store.log(p,'Updating background music. Keeping the finished pictures and reviewed voice.');
+      const outputs=await remixSoundtracks(p,this.store.dir(p.id),music,{signal,onProgress:(progress,message)=>{
+        p.progress=progress;p.message=message;void this.store.save(p).catch(()=>{});
+      }});
+      p.outputs=outputs;
+      p.renderSettings={...DEFAULT_RENDER_SETTINGS,...p.renderSettings,backgroundMusic:music.enabled,musicVolume:music.volume};
+      p.stage='complete';p.progress=100;
+      await this.exportStoryboard(p);
+      await this.store.log(p,'Background music updated. Your films are ready to preview and download.');
+    });
+  }
+  private async exportStoryboard(p:Project){
+    await writeFile(path.join(this.store.dir(p.id),'storyboard.json'),JSON.stringify({version:2,product:p.brief.name,scenes:p.scenes,filmPlans:p.filmPlans,editSources:p.editSources,findings:p.findings,renderSettings:p.renderSettings,productTheme:p.productTheme},null,2));
+  }
   async exportPlan(p:Project){
     const directory=this.store.dir(p.id);
     const cues=subtitleCues(p.scenes);
     await Promise.all([
-      writeFile(path.join(directory,'storyboard.json'),JSON.stringify({version:2,product:p.brief.name,scenes:p.scenes,filmPlans:p.filmPlans,editSources:p.editSources,findings:p.findings,renderSettings:p.renderSettings,productTheme:p.productTheme},null,2)),
+      this.exportStoryboard(p),
       writeFile(path.join(directory,'research.json'),JSON.stringify({sources:p.sources,findings:p.findings},null,2)),
       writeFile(path.join(directory,'narration.txt'),p.scenes.map((s,i)=>`${i+1}. ${s.title}\n${s.narration}`).join('\n\n')),
       // Completed films remain authoritative while only camera/masks change or a rerender is pending.
