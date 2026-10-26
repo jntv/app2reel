@@ -29,6 +29,14 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Bound package downloads and use the main Ubuntu mirror
+        run: |
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          sudo tee /etc/apt/apt.conf.d/80app2reel-ci >/dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
       - name: Install browser and Linux dependencies
         run: pnpm exec playwright install --with-deps chromium
       - name: Install system narration for speech integration tests
