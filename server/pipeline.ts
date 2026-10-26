@@ -52,8 +52,11 @@ export class Pipeline {
       if(!valid.length)throw new Error('The storyboard did not reference any observed product shots. Please explore again.');
       p.scenes=valid.map((s,i):Scene=>{
         const shot=p.shots[s.shotIndex],next=p.shots[s.shotIndex+1];
+        const minimumClip=Math.min(0.5,result.duration);
+        const recordingStart=Math.min(Math.max(0,shot.at-0.4),Math.max(0,result.duration-minimumClip));
+        const recordingEnd=Math.min(result.duration,Math.max(recordingStart+minimumClip,next?.at??result.duration));
         return {id:`scene-${i+1}`,title:s.title.slice(0,160),caption:s.caption.slice(0,360),narration:s.narration.slice(0,2000),duration:Math.round(p.brief.duration/valid.length*100)/100,screenshot:shot.screenshot,feature:s.feature,
-          recordingStart:Math.max(0,shot.at-0.4),recordingEnd:Math.max(shot.at+0.5,Math.min(next?.at??result.duration,result.duration))};
+          recordingStart,recordingEnd};
       });
       p.stage='review';p.progress=100;await this.exportPlan(p);await this.store.log(p,'Your storyboard is ready. Review the scenes, then render your two films.');
     });

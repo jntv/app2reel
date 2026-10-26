@@ -147,16 +147,15 @@ export class LoginSessions {
     if (!this.pending.has(id)) throw new Error(missing);
     if (!await this.save(id).catch(() => false)) throw new Error(signedOut);
   }
+  /** Return a reusable copy without extending the original saved-session expiry. */
   async take(id: string): Promise<SavedLogin | undefined> {
     if (this.pending.has(id)) await this.complete(id);
     if (this.status(id).state !== 'ready') return undefined;
-    const ready = this.ready.get(id)!;
-    clearTimeout(ready.timer); this.ready.delete(id);
-    return ready.saved;
+    return structuredClone(this.ready.get(id)!.saved);
   }
   status(id: string): { state: 'pending' | 'ready' | 'none'; message: string } {
     const ready = this.ready.get(id);
-    if (ready && ready.expires > Date.now()) return { state: 'ready', message: 'Sign-in saved automatically in memory for the next exploration (up to 8 hours).' };
+    if (ready && ready.expires > Date.now()) return { state: 'ready', message: 'Sign-in saved in memory for exploration and retries until its original eight-hour expiry.' };
     if (ready) { clearTimeout(ready.timer); this.ready.delete(id); }
     const pending = this.pending.get(id);
     if (pending && pending.expires > Date.now() && pending.browser.isConnected()) return { state: 'pending', message: waiting };

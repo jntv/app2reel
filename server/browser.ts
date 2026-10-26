@@ -86,6 +86,7 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
         const obs=await observe(page);
         if(!allowedURL(page.url(),project))throw new Error('Browser left the allowed product origins.');
         const shotName=`shot-${String(step+1).padStart(3,'0')}.png`;
+        const capturedAt=(Date.now()-start)/1000;
         await page.screenshot({path:path.join(directory,shotName),animations:'disabled',mask:[page.locator('input[type=password],input[autocomplete=cc-number],input[autocomplete=cc-csc]')]});
         let next:Action;
         if(project.brief.sample){
@@ -98,7 +99,7 @@ Product brief: ${JSON.stringify({...project.brief,url:cleanURL(project.brief.url
 Explore deeply across requested features and user roles when accessible. Avoid repeating actions. Only mark observedFeature if the CURRENT view clearly proves a requested feature. Use its exact name. Empty observedFeature/evidence when none. Choose done when adequate coverage or login/MFA is required. For click/type use an exact elementId from observation. type only search/filter, never sensitive input. scroll text='down' or 'up'. navigate must stay within allowed origins. Do not put secrets or URL query strings in output. History: ${history.slice(-15).join('\n')}
 Current observation: ${JSON.stringify({...obs,elements:obs.elements.map(e=>({...e,href:cleanURL(e.href)}))})}`,actionSchema,{imagePath:path.join(directory,shotName),signal});
         }
-        const shot:Shot={id:`shot-${step+1}`,title:obs.title||`View ${step+1}`,url:obs.url,screenshot:shotName,at:(Date.now()-start)/1000,action:next.reason.slice(0,300)};
+        const shot:Shot={id:`shot-${step+1}`,title:obs.title||`View ${step+1}`,url:obs.url,screenshot:shotName,at:capturedAt,action:next.reason.slice(0,300)};
         const feature=project.brief.features.find(f=>f.toLowerCase()===next.observedFeature.toLowerCase());
         await onShot(shot,feature?{feature,status:'observed',evidence:next.evidence.slice(0,1200),screenshot:shotName}:undefined);
         history.push(`${obs.url}: ${next.action} ${next.elementId} ${next.reason}`);

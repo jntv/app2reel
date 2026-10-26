@@ -74,7 +74,7 @@ async function fixture(options: { pollMs?: number; pendingMs?: number; savedMs?:
   } };
 }
 
-test('manual login autosaves, closes its unrecorded browser, and can be completed repeatedly then consumed once', { skip: !installed }, async () => {
+test('manual login autosaves, closes its unrecorded browser, and restores repeatedly until explicitly discarded', { skip: !installed }, async () => {
   const current = await fixture();
   let reuse: Browser | undefined;
   try {
@@ -92,8 +92,8 @@ test('manual login autosaves, closes its unrecorded browser, and can be complete
     assert.equal(saved.storageState.origins[0].localStorage[0].value, 'local-storage');
     assert.ok(JSON.stringify(saved.storageState).includes('local-indexeddb'));
     assert.deepEqual(saved.sessionStorage, [{ origin: new URL(current.project.brief.url).origin, entries: [['token', 'local-session-storage']] }]);
-    assert.equal(await current.sessions.take(current.project.id), undefined);
-    assert.equal(current.sessions.status(current.project.id).state, 'none');
+    assert.deepEqual(await current.sessions.take(current.project.id), saved);
+    assert.equal(current.sessions.status(current.project.id).state, 'ready');
     reuse = await chromium.launch({ headless: true });
     const context = await reuse.newContext({ storageState: saved.storageState });
     await applySavedLogin(context, saved);
@@ -106,6 +106,18 @@ test('manual login autosaves, closes its unrecorded browser, and can be complete
       await page.goto(new URL('/other', other.project.brief.url).href);
       assert.equal(await page.evaluate(() => sessionStorage.getItem('token')), null);
     } finally { await other.cleanup(); }
+    // A failed run may change its own copy; the saved session must survive for retry.
+    saved.storageState.cookies = []; saved.sessionStorage = [];
+    const retry = await current.sessions.take(current.project.id);
+    assert.ok(retry);
+    const retriedContext = await reuse.newContext({ storageState: retry.storageState });
+    await applySavedLogin(retriedContext, retry);
+    const retriedPage = await retriedContext.newPage();
+    await retriedPage.goto(new URL('/dashboard', current.project.brief.url).href);
+    await retriedPage.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
+    await current.sessions.discard(current.project.id);
+    assert.equal(current.sessions.status(current.project.id).state, 'none');
+    assert.equal(await current.sessions.take(current.project.id), undefined);
   } finally { await reuse?.close(); await current.cleanup(); }
 });
 
@@ -136,7 +148,7 @@ test('take verifies a pending browser directly before its next polling interval'
     await current.page().getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
     assert.equal(current.sessions.status(current.project.id).state, 'pending');
     assert.ok(await current.sessions.take(current.project.id));
-    assert.equal(current.sessions.status(current.project.id).state, 'none');
+    assert.equal(current.sessions.status(current.project.id).state, 'ready');
   } finally { await current.cleanup(); }
 });
 
@@ -232,6 +244,24 @@ test('pending and saved sessions expire, and closing the browser removes stale p
     await current.page().getByRole('button', { name: 'Login', exact: true }).click();
     await until(() => current.sessions.status(current.project.id).state === 'ready');
     await until(() => current.sessions.status(current.project.id).state === 'none');
+    assert.equal(await current.sessions.take(current.project.id), undefined);
+  } finally { await current.cleanup(); }
+});
+
+test('repeated restores retain the original saved-session expiry', { skip: !installed }, async () => {
+  const current = await fixture({ savedMs: 1000 });
+  try {
+    await current.sessions.open(current.project, undefined, credentials);
+    await current.page().getByRole('button', { name: 'Login', exact: true }).click();
+    await until(() => current.sessions.status(current.project.id).state === 'ready');
+    const observedReady = Date.now();
+    await new Promise(resolve => setTimeout(resolve, 450));
+    assert.ok(await current.sessions.take(current.project.id));
+    await current.sessions.complete(current.project.id);
+    assert.ok(await current.sessions.take(current.project.id));
+    assert.equal(current.sessions.status(current.project.id).state, 'ready');
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, observedReady + 1100 - Date.now())));
+    assert.equal(current.sessions.status(current.project.id).state, 'none');
     assert.equal(await current.sessions.take(current.project.id), undefined);
   } finally { await current.cleanup(); }
 });

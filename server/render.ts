@@ -296,8 +296,16 @@ export async function renderVideos(project: Project, directory: string, kinds: O
         : await renderPromo(project, temporary, scenes, states, page, width, height, update, options.signal);
       aborted(options.signal);
       const relative = `${kind}.mp4`;
+      const poster = `${kind}-poster.jpg`;
+      const posterFile = path.join(temporary, poster);
+      await runEncoder([
+        '-ss', String(Math.min(3, duration / 2)), '-i', file,
+        '-frames:v', '1', '-q:v', '2', posterFile,
+      ], options.signal);
+      aborted(options.signal);
       finished.push({ temporary: file, output: path.join(directory, relative) });
-      outputs.push({ kind, file: relative, width, height, fps: FPS, duration });
+      finished.push({ temporary: posterFile, output: path.join(directory, poster) });
+      outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration });
     }
     // Publish only after every requested encode succeeds, preserving previous outputs on failure.
     await writeNarration(temporary, scenes);

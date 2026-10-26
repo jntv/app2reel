@@ -1,6 +1,6 @@
 # Capture Studio product context
 
-Last reviewed: 2026-10-26. Sources: user brief in this chat; `shared/types.ts`; `src/main.tsx`; backend and renderer implementation. No ERP linkage requested; identifiers remain empty. Calendar target was not specified. No effort estimate or publication date is promised.
+Last reviewed: 2026-10-27. Sources: user brief in this chat; `shared/types.ts`; `src/main.tsx`; backend and renderer implementation; live SmartSevak exploration and exported films. No ERP linkage requested; identifiers remain empty. Calendar target was not specified. No effort estimate or publication date is promised.
 
 ## Purpose and users
 
@@ -15,10 +15,10 @@ Help a product owner turn a product name, description, purpose, URL, actors and 
 | REQ-003 | Approved: product name/URL/description/actors/purpose/features input | Validated brief form and JSON persistence; optional test credentials held in memory. |
 | REQ-004 | Approved: explore product deeply, including signed-in features | Screenshot-guided bounded action loop, observation evidence and scoped origins. Manual sign-in and simple login forms implemented. Exhaustive traversal and automatic role switching remain gaps. |
 | REQ-005 | Approved: search product information/tutorials | Codex web research returns linked sources; best effort fallback if search unavailable; sources distinguished from observed product evidence. |
-| REQ-006 | Approved: polished live demo video | Real recorded interactions, selected clips, captions, scene timing, soundtrack and 30fps H.264 export implemented. Sample recordings and encodes verified. Quality remains template-based and reviewable. |
-| REQ-007 | Approved: motion/3D promotional video | Deterministic perspective product cards, kinetic text, geometry and soundtrack; actual MP4 export verified. Arbitrary bespoke CGI/VFX and generative video are not implemented in this first release. |
+| REQ-006 | Approved: polished live demo video | Real recorded interactions, selected clips, captions, scene timing, soundtrack and 30fps H.264 export implemented. Sample and real SmartSevak 30-second 1080p exports fully decoded and visually checked. A post-inference timestamp bug was fixed; the existing SmartSevak clips were manually realigned and checked against the recording. Quality remains template-based and reviewable. |
+| REQ-007 | Approved: motion/3D promotional video | Deterministic perspective product cards, kinetic text, geometry and soundtrack; actual SmartSevak 30-second 1080p MP4 export verified. Product cards are fitted inside the frame and previews use encoded-film posters. Arbitrary bespoke CGI/VFX and generative video are not implemented in this first release. |
 | REQ-008 | Implementation choice: review before export | Editable scene titles/captions/narration/duration; user starts both renders. Narration scripts exported without generated speech. |
-| REQ-009 | Approved 2026-10-26: app itself should attempt sign-in and required CAPTCHA for the supplied SmartSevak test | Optional per-run CAPTCHA authorization; isolated, unrecorded sign-in; masked/cropped screenshot decisions; bounded visible challenge clicks. Live CAPTCHA attempts did not complete. Human login reached the actual dashboard; its div-based sidebar exposed a detection bug, now covered by a regression. Manual login automatically saves all browser storage in memory, handles iframe MFA and concurrent opens, and no longer expires after 15 minutes. A diagnostic mistake crashed the server after the successful save; authenticated exploration/videos still await a fresh session. |
+| REQ-009 | Approved 2026-10-26: app itself should attempt sign-in and required CAPTCHA for the supplied SmartSevak test | Live automated CAPTCHA attempts did not complete; user completed human sign-in. Capture saved it automatically and explored 15 authenticated screens. Dashboard, leads, reminders, bookings and analytics surfaces were observed; engagement workflows were not verified. Both films were generated. The div-based sidebar detection bug, iframe MFA checks, sessionStorage transfer and concurrent windows have regressions. Saved sessions remain reusable in memory for their original eight-hour lifetime; passwords are not persisted. |
 
 ## Constraints and open decisions
 

@@ -90,7 +90,7 @@ app.get('/artifacts/:id/:filename',(req,res,next)=>{
   try{
     const id=String(req.params.id),filename=String(req.params.filename);const p=store.get(id);
     if(!/^[a-zA-Z0-9._-]+\.(png|jpg|mp4|webm|json|txt|srt)$/.test(filename)||filename==='project.json')return res.status(404).end();
-    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.map(o=>o.file),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt']:[])]);
+    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt']:[])]);
     if(!available.has(filename))return res.status(404).end();
     res.setHeader('Cache-Control','no-store');res.sendFile(path.join(store.dir(id),filename),{dotfiles:'allow'},error=>{if(error&&!res.headersSent&&!res.destroyed)next(error);});
   }catch(error){next(error);}

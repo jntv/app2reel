@@ -10,7 +10,7 @@ export interface Source { title: string; url: string; summary: string; }
 export interface Finding { feature: string; status: 'observed'|'not-observed'; evidence: string; screenshot?: string; }
 export interface Shot { id: string; title: string; url: string; screenshot: string; at: number; action?: string; }
 export interface LogEntry { time: string; message: string; level: 'info'|'warn'|'error'; }
-export interface VideoOutput { kind: OutputKind; file: string; width: number; height: number; fps: number; duration: number; }
+export interface VideoOutput { kind: OutputKind; file: string; poster?: string; width: number; height: number; fps: number; duration: number; }
 export interface Project {
   id: string; brief: Brief; createdAt: string; updatedAt: string; stage: Stage; progress: number;
   message: string; logs: LogEntry[]; sources: Source[]; findings: Finding[]; shots: Shot[];
