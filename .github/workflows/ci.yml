@@ -44,7 +44,7 @@ jobs:
         run: sudo apt-get install --yes espeak-ng
       - name: Check local runtime
         run: pnpm run doctor
-      - name: Test
-        run: pnpm test
+      - name: Test browser and media files sequentially
+        run: pnpm exec tsx --test --test-concurrency=1 tests/*.test.ts
       - name: Build and typecheck
         run: pnpm run build
