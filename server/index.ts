@@ -91,12 +91,13 @@ app.get('/artifacts/:id/:filename',(req,res,next)=>{
     if(!/^[a-zA-Z0-9._-]+\.(png|jpg|mp4|webm|json|txt|srt)$/.test(filename)||filename==='project.json')return res.status(404).end();
     const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.map(o=>o.file),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt']:[])]);
     if(!available.has(filename))return res.status(404).end();
-    res.setHeader('Cache-Control','no-store');res.sendFile(path.join(store.dir(id),filename),{dotfiles:'allow'},error=>{if(error)next(error);});
+    res.setHeader('Cache-Control','no-store');res.sendFile(path.join(store.dir(id),filename),{dotfiles:'allow'},error=>{if(error&&!res.headersSent&&!res.destroyed)next(error);});
   }catch(error){next(error);}
 });
 app.get('/sample-product',(_req,res)=>res.type('html').send(fixtureHTML()));
 app.use('/api',(_req,res)=>res.status(404).json({error:'Unknown API endpoint'}));
 app.use((error:unknown,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{
+  if(res.headersSent||res.destroyed){res.destroy();return;}
   if(error instanceof z.ZodError)return res.status(400).json({error:error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('; ')});
   const e=error as Error&{status?:number};return res.status(e.status||400).json({error:e.message||'Request failed'});
 });
