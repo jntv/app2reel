@@ -24,6 +24,7 @@ test('graphics promo renders without screenshots and exports the same burned sub
     const project=fixture();project.renderSettings!.promoAspect='portrait';
     const [output] = await renderVideos(project,directory,['promo']);
     assert.deepEqual([output.width,output.height],[720,1280]);
+    assert.match(output.revision||'',/^[a-f\d-]{36}$/,'Each successful export needs a fresh browser cache identity.');
     assert.equal(output.duration,1.2);
     assert.ok(output.poster);
     const srt = await readFile(path.join(directory,'captions.srt'),'utf8');
@@ -63,7 +64,7 @@ test('cancelled dynamic rendering preserves previous completed media and removes
 test('narrated film contains a real spoken track and exports its audible timing',{skip:!available||!narrationEngine()},async()=>{
   const directory=await mkdtemp(path.join(tmpdir(),'capture-spoken-film-'));
   try{
-    const project=fixture();project.scenes=[{...project.scenes[0],narration:'Meet your workspace.',duration:2}];project.renderSettings!.narration=true;
+    const project=fixture();project.scenes=[{...project.scenes[0],narration:'Meet your workspace.',duration:2}];project.renderSettings!.narration=true;project.renderSettings!.narrationEngine='system';
     const [output]=await renderVideos(project,directory,['promo']);assert.equal(output.narrated,true);assert.equal(output.duration,2);
     const timing=JSON.parse(await readFile(path.join(directory,'narration-timing.json'),'utf8'));
     assert.ok(timing.cues[0].start>0);assert.ok(timing.cues.at(-1).end<2);

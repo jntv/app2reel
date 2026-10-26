@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
@@ -205,7 +206,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     options.onProgress?.(0, 'Preparing local video assets');
     const settings = { ...DEFAULT_RENDER_SETTINGS, ...project.renderSettings };
     const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
-    const narration=settings.narration!==false?await prepareNarration(scenes,temporary,runEncoder,options.signal):undefined;
+    const narration=settings.narration!==false?await prepareNarration(scenes,temporary,runEncoder,options.signal,{engine:settings.narrationEngine,voice:settings.narrationVoice}):undefined;
     const cues = narration?.cues||subtitleCues(scenes);
     const stateAt = (index: number, progress: number, totalFrame: number): FilmState => {
       const scene = scenes[index];
@@ -256,7 +257,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       aborted(options.signal);
       finished.push({ temporary: file, output: path.join(directory, relative) });
       finished.push({ temporary: posterFile, output: path.join(directory, poster) });
-      outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration, narrated:!!narration });
+      outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration, narrated:!!narration, revision:randomUUID() });
     }
     // Publish only after every requested encode succeeds, preserving previous outputs on failure.
     await writeNarration(temporary, scenes,cues);

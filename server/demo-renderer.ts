@@ -9,6 +9,7 @@ import { demoTemplate } from './demo-template.js';
 import { attentionBounds, cameraKeys, cameraTiming, cameraFilter, cameraForFrame, clipTiming, demoLayout, ease, projectArea, projectCursor, sourceTime } from './demo-motion.js';
 import { cursorAt, extractRenderedCursorFrames, type CursorPoint } from './cursor-detection.js';
 import { privacyFilters, type PrivacyRectangle } from './demo-privacy.js';
+import {prepareDemoEdit} from './demo-edit.js';
 
 type Encoder = { process: ChildProcess; done: Promise<void>; stop: () => void };
 export interface DynamicDemoOptions {
@@ -36,14 +37,15 @@ function check(signal?: AbortSignal): void { if (signal?.aborted) throw new Erro
 
 /** A local edit of live footage with frame-accurate camera and motion artwork. */
 export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<string> {
-  const { project, temporary, scenes, page, width, height, fps, recording, update, signal, stateAt, encoder, runEncoder, encodingOptions } = options;
-  for (const scene of scenes) {
+  const { project, temporary, scenes:reviewedScenes, page, width, height, fps, recording:originalRecording, update, signal, stateAt, encoder, runEncoder, encodingOptions } = options;
+  for (const scene of reviewedScenes) {
     if (!Number.isFinite(scene.recordingStart) || !Number.isFinite(scene.recordingEnd) || scene.recordingStart! < 0 || scene.recordingEnd! <= scene.recordingStart!) throw new Error('Every demo scene requires a reviewed recording interval.');
   }
   check(signal);
+  if(reviewedScenes.some(scene=>scene.recordingRanges))update(0,'Removing reviewed waiting time from the demo');
+  const {recording,scenes,track}=await prepareDemoEdit(originalRecording,reviewedScenes,project.cursorTrack||[],temporary,fps,runEncoder,signal);
   const settings = (project as Project & { renderSettings?: { cursorHighlights?: boolean } }).renderSettings;
   const timings = scenes.map(scene => clipTiming(scene.recordingStart!, scene.recordingEnd!, scene.frames / fps));
-  const track: CursorPoint[] = (project as Project & { cursorTrack?: CursorPoint[] }).cursorTrack || [];
   let cursorFrames: (CursorPoint | undefined)[][] | undefined;
   const hasTelemetry = track.length > 0;
   if (settings?.cursorHighlights !== false) {

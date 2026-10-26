@@ -33,6 +33,10 @@ test('film format and feature reveal timing are bounded before rendering',()=>{
   const scene={id:'s',title:'Open a view',caption:'',narration:'',duration:3,focusRevealAt:1.2};
   assert.equal(sceneSchema.safeParse(scene).success,true);
   assert.equal(sceneSchema.safeParse({...scene,focusRevealAt:3.1}).success,false);
+  const clip={...scene,recordingStart:2,recordingEnd:9,recordingRanges:[{start:2,end:3},{start:7,end:9}]};
+  assert.equal(sceneSchema.safeParse(clip).success,true);
+  for(const recordingRanges of [[{start:2,end:2.001}],[{start:1,end:3}],[{start:2,end:10}],[{start:4,end:3}],[{start:2,end:5},{start:4,end:7}]])assert.equal(sceneSchema.safeParse({...clip,recordingRanges}).success,false);
+  assert.equal(sceneSchema.safeParse({...scene,recordingRanges:[{start:2,end:3}]}).success,false);
 });
 
 test('browser scope requires an exact allowed HTTP origin', () => {

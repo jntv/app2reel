@@ -12,6 +12,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "tsx --test tests/*.test.ts",
     "setup": "playwright install chromium",
+    "setup:voice": "node scripts/setup-voice.mjs",
     "check": "tsc --noEmit"
   },
   "dependencies": {

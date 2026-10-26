@@ -11,6 +11,8 @@ import { browserAvailable, clearSessions, completeLogin, discardSession, loginSt
 import { ffmpegAvailable } from './render.js';
 import { fixtureHTML } from './fixture.js';
 import { narrationEngine } from './narration.js';
+import { naturalVoiceReady } from './local-voice.js';
+import { registerNarrationRoutes } from './narration-api.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const port=Number(process.env.PORT||4310);
@@ -31,7 +33,8 @@ app.use((req,res,next)=>{
 app.use(express.json({limit:'100kb'}));
 const asyncRoute=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>(req:express.Request,res:express.Response,next:express.NextFunction)=>{void fn(req,res).catch(next);};
 
-app.get('/api/health',asyncRoute(async(_req,res)=>res.json({ai:await ai.status(),browser:await browserAvailable(),ffmpeg:await ffmpegAvailable(),narration:!!narrationEngine(),version:'0.1.0'})));
+app.get('/api/health',asyncRoute(async(_req,res)=>res.json({ai:await ai.status(),browser:await browserAvailable(),ffmpeg:await ffmpegAvailable(),narration:naturalVoiceReady()||!!narrationEngine(),version:'0.1.0'})));
+const closeNarration=registerNarrationRoutes(app,store.root,()=>pipeline.assertIdle());
 app.post('/api/auth/login',asyncRoute(async(_req,res)=>{pipeline.assertIdle();res.json(await ai.login());}));
 app.get('/api/projects',(_req,res)=>res.json([...store.projects.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))));
 app.post('/api/projects',asyncRoute(async(req,res)=>{
@@ -127,5 +130,5 @@ if(existsSync(path.join(root,'dist/index.html'))&&(process.env.NODE_ENV==='produ
   app.use(vite.middlewares);
 }
 const server=app.listen(port,'127.0.0.1',()=>console.log(`Capture Studio is ready at http://127.0.0.1:${port}`));
-async function shutdown(){await clearSessions();await vite?.close();server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),2000).unref();}
+async function shutdown(){await closeNarration();await clearSessions();await vite?.close();server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),2000).unref();}
 process.on('SIGINT',()=>void shutdown());process.on('SIGTERM',()=>void shutdown());

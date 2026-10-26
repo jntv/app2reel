@@ -177,10 +177,50 @@ test('booking overview has one heading and analytics list opens only the active 
   await setState(page, { ...state, feature: 'Bookings', duration: 7, progress: .2 + .4 / 7 });
   assert.equal(await page.locator('.booking-dialog').evaluate(el => getComputedStyle(el).opacity), '1', 'branch dialog entrance should settle within 0.4 seconds after its cue');
   const analytics = { ...state, scene: 4, scenes: 5, feature: 'Reporting', duration: 6, visualModel: { heading: 'Analytics and Insights', labels: ['Date Range', 'Date Field', 'Dashboard'], layout: 'analytics' as const } };
-  for (const [progress, active, opacity] of [[.37, 'Date Range', '0'], [.44, 'Date Field', '0'], [.55, 'Dashboard', '1']] as const) {
+  for (const [progress, active, opacity] of [[.37, 'Date Range', '0'], [.52, 'Date Field', '0'], [.7, 'Dashboard', '1']] as const) {
     await setState(page, { ...analytics, progress });
     assert.equal(await page.locator('.list-line.active').textContent(), active);
     assert.equal(await page.locator('.dashboard-menu').evaluate(el => getComputedStyle(el).opacity), opacity);
+  }
+  await page.close();
+});
+
+test('product depth is attached to its actual model and portrait detail framing uses the available reading space', async () => {
+  const page = await browser.newPage({ viewport: { width: 720, height: 1280 } });
+  await page.setContent(promoTemplate(720, 1280, productTheme));
+  const lead = { ...state, duration: 7, feature: 'Leads', visualModel: { heading: 'Lead Management', labels: ['Phone', 'Search', 'Open', 'Closed', 'All'], layout: 'table' as const } };
+  await setState(page, { ...lead, progress: .15 });
+  const context = await page.locator('.model').boundingBox();
+  await setState(page, { ...lead, progress: .6 });
+  const detail = await page.locator('.model').boundingBox();
+  const copy = await page.locator('#copy').boundingBox();
+  assert.ok(context && detail && copy);
+  assert.ok(detail.width / context.width > 1.1, 'The search action must receive a meaningful closer view.');
+  assert.ok(detail.y > copy.y + copy.height + 20 && detail.y < copy.y + copy.height + 150, 'Product model should sit beneath the headline without a large empty middle.');
+  const material = await page.locator('.object-backplate').evaluate(el => ({ transform: getComputedStyle(el).transform, radius: getComputedStyle(el).borderRadius, width: el.clientWidth }));
+  assert.match(material.transform, /matrix3d/);
+  assert.ok(material.width > 600, 'The backing must fit the product, rather than becoming a decorative satellite.');
+  assert.equal(await page.locator('.object-shadow').count(), 1);
+  for (const progress of [.15, .35, .6, .85, .95]) {
+    await setState(page, { ...lead, progress });
+    const action = await page.locator('.search-button').boundingBox();
+    assert.ok(action && action.x > 0 && action.y > 0 && action.x + action.width < 720 && action.y + action.height < 1160, 'Closer product framing must preserve its active search control and subtitle safe area.');
+  }
+  await page.close();
+});
+
+test('opening beats have reading holds and the final CTA waits until the final 1.5 seconds', async () => {
+  const page = await browser.newPage({ viewport: { width: 720, height: 1280 } });
+  await page.setContent(promoTemplate(720, 1280, productTheme));
+  for (const [seconds, phase] of [[1.3, 'hook'], [2.35, 'promise'], [3.4, 'brand'], [4.2, 'product']] as const) {
+    await setState(page, { ...state, scene: 0, scenes: 5, duration: 7, progress: seconds / 7 });
+    assert.equal(await page.locator('#stage').getAttribute('data-phase'), phase);
+  }
+  for (const duration of [6, 8, 10]) {
+    await setState(page, { ...state, scene: 4, scenes: 5, duration, progress: (duration - 1.6) / duration });
+    assert.equal(await page.locator('#stage').getAttribute('data-phase'), 'list');
+    await setState(page, { ...state, scene: 4, scenes: 5, duration, progress: (duration - 1.3) / duration });
+    assert.equal(await page.locator('#stage').getAttribute('data-phase'), 'close');
   }
   await page.close();
 });

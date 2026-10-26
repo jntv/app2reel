@@ -18,7 +18,8 @@ export const briefSchema = z.object({
 
 export const renderSettingsSchema = z.object({
   motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean(),
-  narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional(), promoAspect: z.enum(['landscape','portrait']).optional()
+  narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional(), promoAspect: z.enum(['landscape','portrait']).optional(),
+  narrationEngine:z.enum(['natural','system']).optional(),narrationVoice:z.enum(['melo_india','af_heart','am_michael']).optional()
 }).strict();
 
 const colorSchema=z.string().regex(/^#[0-9a-f]{6}$/i);
@@ -31,12 +32,13 @@ export const sceneSchema = z.object({
   narration:z.string().max(2000),duration:z.number().min(1).max(30),
   screenshot:z.string().regex(/^[a-zA-Z0-9._-]+\.(png|jpg)$/).optional(),
   recordingStart:z.number().nonnegative().optional(),recordingEnd:z.number().nonnegative().optional(),
+  recordingRanges:z.array(z.object({start:z.number().nonnegative(),end:z.number().nonnegative()}).strict()).min(1).max(6).optional(),
   feature:z.string().max(200).optional(),
   focus:z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),zoom:z.number().min(1).max(2.4)}).strict().optional(),
   focusArea:rectangleSchema.optional(),visualModel:visualModelSchema.optional(),
   focusRevealAt:z.number().min(0).max(30).optional(),
   redactions:z.array(rectangleSchema).max(8).optional()
-}).strict().refine(scene=>scene.focusRevealAt===undefined||scene.focusRevealAt<=scene.duration,'Focus must begin within the scene.');
+}).strict().refine(scene=>scene.focusRevealAt===undefined||scene.focusRevealAt<=scene.duration,'Focus must begin within the scene.').refine(scene=>!scene.recordingRanges||(scene.recordingStart!==undefined&&scene.recordingEnd!==undefined&&scene.recordingRanges.every((range,i)=>Math.round((range.end-range.start)*30)>=1&&range.start>=scene.recordingStart!&&range.end<=scene.recordingEnd!&&(i===0||range.start>=scene.recordingRanges![i-1].end))),'Recording cuts must be ordered and fit inside the source clip.');
 
 export class Store {
   readonly events = new EventEmitter();
