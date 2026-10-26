@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
+import {renderedClipClock,type RenderedClip} from './clip-clock.js';
 
 export interface CursorPoint { at: number; x: number; y: number; kind: 'move' | 'click' | 'type' }
-export interface RenderedCursorClip { start: number; sourceDuration: number; playbackRate: number; frames: number }
+export type RenderedCursorClip=RenderedClip;
 interface DetectedPoint { x: number; y: number; confidence: number }
 
 const orange = (pixels: Uint8Array, position: number): boolean => {
@@ -112,10 +113,10 @@ export async function extractRenderedCursorFrames(recording: string, clips: Rend
   for (const clip of clips) {
     if (signal?.aborted) throw new Error('Video rendering cancelled.');
     if (!Number.isFinite(clip.start) || clip.start < 0 || !Number.isFinite(clip.sourceDuration) || clip.sourceDuration <= 0 || clip.sourceDuration > 90 || !Number.isFinite(clip.playbackRate) || clip.playbackRate < 1 || clip.playbackRate > 1.12 + 1e-7 || !Number.isInteger(clip.frames) || clip.frames < 1 || clip.frames > fps * 90) throw new Error('Invalid cursor clip sampling.');
-    const outputDuration = clip.frames / fps;
+    const clock=renderedClipClock(clip,fps);
     const child = spawn(process.env.FFMPEG_PATH || ffmpegStatic || 'ffmpeg', [
-      '-hide_banner', '-nostdin', '-loglevel', 'error', '-ss', String(clip.start), '-t', String(clip.sourceDuration), '-i', recording,
-      '-vf', `setpts=(PTS-STARTPTS)/${clip.playbackRate.toFixed(8)},fps=${fps},tpad=stop_mode=clone:stop_duration=${outputDuration},trim=duration=${outputDuration},scale=${width}:${height}:flags=bilinear`,
+      '-hide_banner', '-nostdin', '-loglevel', 'error', ...clock.seek, '-i', recording,
+      '-vf', `${clock.filter},scale=${width}:${height}:flags=bilinear`,
       '-frames:v', String(clip.frames), '-fps_mode', 'passthrough', '-an', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     let error = '';

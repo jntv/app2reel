@@ -57,10 +57,10 @@ export function remapDemoCursor(track:readonly CursorPoint[],cuts:readonly DemoE
  * Both footage and orange-ring analysis consume this exact 30fps source. Source
  * filenames come only from the renderer; API-provided cuts contain times only.
  */
-export async function prepareDemoEdit<T extends Scene>(recording:string,scenes:readonly T[],track:readonly CursorPoint[],temporary:string,fps:number,runEncoder:RunEncoder,signal?:AbortSignal):Promise<{recording:string;scenes:T[];track:CursorPoint[]}> {
+export async function prepareDemoEdit<T extends Scene>(recording:string,scenes:readonly T[],track:readonly CursorPoint[],temporary:string,fps:number,runEncoder:RunEncoder,signal?:AbortSignal):Promise<{recording:string;scenes:T[];track:CursorPoint[];normalized:boolean}> {
   check(signal);
   const plan=demoEditPlan(scenes,fps);
-  if(!plan)return {recording,scenes:[...scenes],track:[...track]};
+  if(!plan)return {recording,scenes:[...scenes],track:[...track],normalized:false};
   if(!path.isAbsolute(recording)||!path.isAbsolute(temporary))throw new Error('Demo edits require local recording and temporary paths.');
   const files=plan.cuts.map((_,index)=>path.join(temporary,`demo-cut-${index}.mkv`));
   const list=path.join(temporary,'demo-edits.txt'),edited=path.join(temporary,'demo-edited.mkv');
@@ -76,7 +76,7 @@ export async function prepareDemoEdit<T extends Scene>(recording:string,scenes:r
     await writeFile(list,files.map((_,index)=>`file 'demo-cut-${index}.mkv'`).join('\n'),'utf8');
     await runEncoder(['-f','concat','-safe','1','-i',list,'-map','0:v:0','-an','-c:v','copy',edited],signal);
     check(signal);complete=true;
-    return {recording:edited,scenes:plan.scenes,track:remapDemoCursor(track,plan.cuts,fps)};
+    return {recording:edited,scenes:plan.scenes,track:remapDemoCursor(track,plan.cuts,fps),normalized:true};
   }finally{
     await Promise.all([...files,list,...(complete?[]:[edited])].map(file=>rm(file,{force:true})));
   }

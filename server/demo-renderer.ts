@@ -10,6 +10,7 @@ import { attentionBounds, cameraKeys, cameraTiming, cameraFilter, cameraForFrame
 import { cursorAt, extractRenderedCursorFrames, type CursorPoint } from './cursor-detection.js';
 import { privacyFilters, type PrivacyRectangle } from './demo-privacy.js';
 import {prepareDemoEdit} from './demo-edit.js';
+import {renderedClipClock} from './clip-clock.js';
 
 type Encoder = { process: ChildProcess; done: Promise<void>; stop: () => void };
 export interface DynamicDemoOptions {
@@ -43,9 +44,9 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
   }
   check(signal);
   if(reviewedScenes.some(scene=>scene.recordingRanges))update(0,'Removing reviewed waiting time from the demo');
-  const {recording,scenes,track}=await prepareDemoEdit(originalRecording,reviewedScenes,project.cursorTrack||[],temporary,fps,runEncoder,signal);
+  const {recording,scenes,track,normalized}=await prepareDemoEdit(originalRecording,reviewedScenes,project.cursorTrack||[],temporary,fps,runEncoder,signal);
   const settings = (project as Project & { renderSettings?: { cursorHighlights?: boolean } }).renderSettings;
-  const timings = scenes.map(scene => clipTiming(scene.recordingStart!, scene.recordingEnd!, scene.frames / fps));
+  const timings = scenes.map(scene => ({...clipTiming(scene.recordingStart!, scene.recordingEnd!, scene.frames / fps),...(normalized?{sourceFrameRange:{start:Math.round(scene.recordingStart!*fps),end:Math.round(scene.recordingEnd!*fps)}}:{})}));
   let cursorFrames: (CursorPoint | undefined)[][] | undefined;
   const hasTelemetry = track.length > 0;
   if (settings?.cursorHighlights !== false) {
@@ -91,13 +92,14 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
     const cameraPlan = cameraKeys({ ...frameState(0), focusArea: area }, scene.frames, layout, bounds);
     const move = cameraTiming({ ...frameState(0), focusArea: area }, layout, bounds);
     const privacy = privacyFilters((scene as Scene & { redactions?: PrivacyRectangle[] }).redactions);
+    const clock=renderedClipClock({...timing,frames:scene.frames},fps);
     const filter = [
-      `[0:v]${privacy ? `${privacy},` : ''}setpts=(PTS-STARTPTS)/${timing.playbackRate.toFixed(8)},fps=${fps},tpad=stop_mode=clone:stop_duration=${outputDuration},trim=duration=${outputDuration},${cameraFilter(cameraPlan, layout, fps, theme?.surface)},pad=${width}:${height}:${layout.x}:${layout.y}:color=0xf4f6f9[live]`,
+      `[0:v]${privacy ? `${privacy},` : ''}${clock.filter},${cameraFilter(cameraPlan, layout, fps, theme?.surface)},pad=${width}:${height}:${layout.x}:${layout.y}:color=0xf4f6f9[live]`,
       '[live][1:v]overlay=0:0:format=auto:shortest=1,format=yuv420p[out]',
     ].join(';');
     const segment = path.join(temporary, `demo-scene-${index}.mp4`);
     const job = encoder([
-      '-ss', String(timing.start), '-t', String(timing.sourceDuration), '-i', recording,
+      ...clock.seek, '-i', recording,
       '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(fps), '-i', 'pipe:0',
       '-filter_complex', filter, '-map', '[out]', '-an', '-t', String(outputDuration), ...encodingOptions(), segment,
     ], signal);
