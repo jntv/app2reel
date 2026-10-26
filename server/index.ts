@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { Store, briefSchema, sceneSchema } from './store.js';
 import { LocalAI } from './ai.js';
 import { Pipeline } from './pipeline.js';
-import { browserAvailable, clearSessions, completeLogin, discardSession, openLogin } from './browser.js';
+import { browserAvailable, clearSessions, completeLogin, discardSession, loginStatus, openLogin } from './browser.js';
 import { ffmpegAvailable } from './render.js';
 import { fixtureHTML } from './fixture.js';
 
@@ -66,10 +66,11 @@ app.post('/api/projects/:id/explore',asyncRoute(async(req,res)=>{
 }));
 app.post('/api/projects/:id/login',asyncRoute(async(req,res)=>{
   pipeline.assertIdle();const body=z.object({loginUrl:z.string().url().optional(),credentials:z.object({username:z.string().min(1).max(500),password:z.string().min(1).max(1000)}).strict().optional()}).strict().parse(req.body);
-  await openLogin(store.get(String(req.params.id)),body.loginUrl,body.credentials);res.json({message:body.credentials?'Credentials filled in the unrecorded browser. Complete the CAPTCHA and sign in, then choose I’ve finished signing in.':'Sign in in the browser window, then choose I’ve finished signing in. This window is not recorded.'});
+  await openLogin(store.get(String(req.params.id)),body.loginUrl,body.credentials);res.json({message:body.credentials?'Credentials filled in the unrecorded browser. Complete the CAPTCHA and sign in; Capture will save the session automatically.':'Sign in in the unrecorded browser. Capture will save the session automatically.'});
 }));
+app.get('/api/projects/:id/login/status',asyncRoute(async(req,res)=>{const p=store.get(String(req.params.id));res.json(loginStatus(p.id));}));
 app.post('/api/projects/:id/login/complete',asyncRoute(async(req,res)=>{
-  await completeLogin(store.get(String(req.params.id)).id);res.json({message:'Session saved in memory for the next exploration. It expires in one hour.'});
+  await completeLogin(store.get(String(req.params.id)).id);res.json({message:'Signed-in session is ready for exploration. It stays in memory for up to eight hours.'});
 }));
 app.post('/api/projects/:id/render',asyncRoute(async(req,res)=>{
   const {kinds}=z.object({kinds:z.array(z.enum(['demo','promo'])).min(1).max(2)}).strict().parse(req.body);

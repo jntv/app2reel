@@ -1,49 +1,24 @@
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
+import { chromium, type BrowserContext, type Page } from 'playwright';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Project, Shot, Finding } from '../shared/types.js';
 import type { LocalAI } from './ai.js';
 import { automatedSignIn, type SignInCredentials } from './signin.js';
+import { LoginSessions, applySavedLogin } from './login-sessions.js';
 
-type BrowserState = Awaited<ReturnType<BrowserContext['storageState']>>;
 export type Credentials = SignInCredentials;
-type Login = { browser:Browser; context:BrowserContext; timer:ReturnType<typeof setTimeout> };
-const pendingLogins=new Map<string,Login>();
-const sessions=new Map<string,{state:BrowserState;expires:number;timer:ReturnType<typeof setTimeout>}>();
+const loginSessions=new LoginSessions();
 export const riskyAction = /\b(delete|remove|destroy|pay|purchase|buy|checkout|subscribe|send|publish|invite|transfer|withdraw|revoke|deactivate|cancel subscription|sign out|log out)\b/i;
 const writeAction = /\b(create|save|update|submit|add|edit|upload|import|apply|enable|disable|archive|confirm)\b/i;
 export function cleanURL(value:string) { try {const u=new URL(value);return u.origin+u.pathname;} catch{return ''; } }
 export function allowedURL(value:string,project:Project) { try{const u=new URL(value);return ['http:','https:'].includes(u.protocol) && !u.username && !u.password && [new URL(project.brief.url).origin,...project.brief.allowedOrigins.map(v=>new URL(v).origin)].includes(u.origin);}catch{return false;} }
 export function browserAvailable(){return import('node:fs').then(({existsSync})=>existsSync(chromium.executablePath()));}
 function abort(signal:AbortSignal){if(signal.aborted)throw new Error('Run cancelled');}
-export async function openLogin(project:Project, loginUrl?:string,credentials?:Pick<Credentials,'username'|'password'>) {
-  const url=loginUrl||project.brief.url;if(!allowedURL(url,project)) throw new Error('Add the login URL origin to allowed origins first.');
-  await clearLogin(project.id);
-  const browser=await chromium.launch({headless:false});
-  const context=await browser.newContext({viewport:{width:1440,height:900},acceptDownloads:false});
-  const timer=setTimeout(()=>void clearLogin(project.id),15*60*1000);timer.unref();
-  pendingLogins.set(project.id,{browser,context,timer});
-  try{
-    const page=await context.newPage();await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
-    if(credentials){
-      if(!allowedURL(page.url(),project))throw new Error('The sign-in page left the allowed origins.');
-      const password=page.locator('input[type=password]:visible').first();await password.waitFor({timeout:10000});
-      await page.locator('input[type=email]:visible,input[autocomplete=username]:visible,input[name*=email i]:visible,input[name*=user i]:visible,input[type=text]:visible').first().fill(credentials.username);
-      await password.fill(credentials.password);
-    }
-  }catch{await clearLogin(project.id);throw new Error('The unrecorded sign-in browser could not be prepared. Check the sign-in URL or open it without automatic field filling.');}
-}
-export async function completeLogin(id:string) {
-  const login=pendingLogins.get(id);if(!login)throw new Error('Open the sign-in browser first. Sign-in sessions expire after 15 minutes.');
-  const state=await login.context.storageState({indexedDB:true});
-  const previous=sessions.get(id);if(previous)clearTimeout(previous.timer);
-  const timer=setTimeout(()=>sessions.delete(id),60*60*1000);timer.unref();
-  sessions.set(id,{state,expires:Date.now()+60*60*1000,timer});
-  await clearLogin(id);
-}
-async function clearLogin(id:string){const old=pendingLogins.get(id);if(old){clearTimeout(old.timer);pendingLogins.delete(id);await old.browser.close().catch(()=>{});}}
-export async function discardSession(id:string){const s=sessions.get(id);if(s)clearTimeout(s.timer);sessions.delete(id);await clearLogin(id);}
-export async function clearSessions(){await Promise.all([...new Set([...pendingLogins.keys(),...sessions.keys()])].map(discardSession));}
+export const openLogin=(project:Project,loginUrl?:string,credentials?:Pick<Credentials,'username'|'password'>)=>loginSessions.open(project,loginUrl,credentials);
+export const completeLogin=(id:string)=>loginSessions.complete(id);
+export const loginStatus=(id:string)=>loginSessions.status(id);
+export const discardSession=(id:string)=>loginSessions.discard(id);
+export const clearSessions=()=>loginSessions.clear();
 async function scope(context:BrowserContext,project:Project,login=false) {
   await context.route('**/*',route=>{
     const req=route.request();
@@ -77,12 +52,13 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
   let recording:string|undefined;
   const rawDir=path.join(directory,'raw');await mkdir(rawDir,{recursive:true,mode:0o700});
   try {
-    const saved=sessions.get(project.id);if(saved)clearTimeout(saved.timer);sessions.delete(project.id);
+    if(credentials)await loginSessions.discard(project.id);
     if(credentials)await onLog('Signing into the product in an unrecorded browser.');
-    const state=credentials?await automatedSignIn(browser,project,credentials,ai,signal,onLog):(saved&&saved.expires>Date.now()?saved.state:undefined);
+    const saved=credentials?await automatedSignIn(browser,project,credentials,ai,signal,onLog):await loginSessions.take(project.id);
     abort(signal);
     const size={width:1920,height:1080};
-    context=await browser.newContext({viewport:size,deviceScaleFactor:1,storageState:state,acceptDownloads:false,recordVideo:{dir:rawDir,size},serviceWorkers:'block'});
+    context=await browser.newContext({viewport:size,deviceScaleFactor:1,storageState:saved?.storageState,acceptDownloads:false,recordVideo:{dir:rawDir,size},serviceWorkers:'block'});
+    if(saved)await applySavedLogin(context,saved);
     await scope(context,project);
     const page=await context.newPage();const video=page.video();
     // Never keep recordings of sign-in. Stop and remove raw footage if a sign-in form is encountered.

@@ -12,7 +12,8 @@ Last reviewed: 2026-10-26. Source: `server/index.ts`, `store.ts`, `shared/types.
 | GET `/api/projects/:id` | REQ-003 | Project | Metadata, progress, findings, scenes and outputs. |
 | PUT `/api/projects/:id` | REQ-003/008 | `{brief?: Partial<Brief>, scenes?: Scene[]}` → Project | Brief changes invalidate evidence/output and stored login; scene edits invalidate output. Reject over90s timelines and foreign screenshot refs. |
 | POST `/api/projects/:id/login` | REQ-004/009 | `{loginUrl?: string, credentials?: {username,password}}` → message | Opens visible unrecorded sign-in browser; optionally fills credentials locally, without submitting or attempting CAPTCHA. Requires allowed origin. |
-| POST `/api/projects/:id/login/complete` | REQ-004 | `{}` → message | Stores browser auth in memory for next run; expiry one hour. |
+| GET `/api/projects/:id/login/status` | REQ-004/009 | `{state: 'pending'\|'ready'\|'none', message}` | Reports automatic sign-in handoff without returning credentials or tokens. |
+| POST `/api/projects/:id/login/complete` | REQ-004/009 | `{}` → message | Optional idempotent confirmation of verified sign-in; rejects incomplete forms without closing the browser. Auth is autosaved in memory for next run, expiring after eight hours. |
 | POST `/api/projects/:id/explore` | REQ-004/005/009 | `{credentials?: {username,password,loginUrl?,attemptCaptcha?}}` →202 Project | Starts one cancellable job. Credentials and CAPTCHA consent are run-local and excluded from persisted Project type. |
 | POST `/api/projects/:id/render` | REQ-006/007 | `{kinds: ('demo'\|'promo')[]}` →202 Project | Renders reviewed storyboard and publishes outputs. |
 | POST `/api/projects/:id/cancel` | REQ-004/006/007 | `{}` → message | Requests job abort. |

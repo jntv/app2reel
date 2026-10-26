@@ -4,9 +4,9 @@ import path from 'node:path';
 import type { Browser, BrowserContext, Frame, Locator, Page } from 'playwright';
 import type { Project } from '../shared/types.js';
 import type { LocalAI } from './ai.js';
+import type { SavedLogin } from './login-sessions.js';
 
 export type SignInCredentials = { username: string; password: string; loginUrl?: string; attemptCaptcha?: boolean };
-type BrowserState = Awaited<ReturnType<BrowserContext['storageState']>>;
 type Rect = { x: number; y: number; width: number; height: number };
 type CaptchaFrame = { frame: Frame; box: Rect; challenge: boolean };
 type CaptchaState = { present: boolean; verified: boolean; frames: CaptchaFrame[]; checkbox?: Locator };
@@ -170,23 +170,34 @@ async function attemptCaptcha(page: Page, ai: LocalAI, parentSignal: AbortSignal
   }
 }
 
-async function authenticated(page: Page, loginUrl: string): Promise<boolean> {
+async function authenticated(page: Page, formUrl: string): Promise<boolean> {
   // Disappearing fields while a form is loading do not prove authentication.
-  if (await page.locator('input[type="password"]:visible, input[autocomplete="username"]:visible, input[autocomplete="one-time-code"]:visible').count()) return false;
-  if (await page.getByRole('button', { name: /^(sign[ -]?in|log[ -]?in|login)$/i }).first().isVisible().catch(() => false)) return false;
+  for (const frame of page.frames()) {
+    try {
+      if (frame !== page.mainFrame() && !await (await frame.frameElement()).isVisible()) continue;
+      if (await frame.locator('input[type="password"]:visible, input[autocomplete="username"]:visible, input[autocomplete="one-time-code"]:visible, input[name*="otp" i]:visible').count()) return false;
+      if (await frame.getByRole('button', { name: /^(sign[ -]?in|log[ -]?in|login)$/i }).first().isVisible()) return false;
+    } catch { return false; }
+  }
   const current = new URL(page.url());
-  const initial = new URL(loginUrl);
-  const loginPath = /(?:^|\/)(?:sign[ -]?in|log[ -]?in|login|auth|authentication)(?:\/|$)/i;
-  if ((current.origin !== initial.origin || current.pathname !== initial.pathname) && !loginPath.test(current.pathname)) return true;
-  if (await page.getByRole('button', { name: /log[ -]?out|sign[ -]?out/i }).first().isVisible().catch(() => false)) return true;
+  const initial = new URL(formUrl);
+  const loginPath = /(?:^|\/)(?:sign[ -]?in|log[ -]?in|login|auth|authentication|oauth|authorize|callback|mfa|2fa|otp|two[-_]?factor|forgot(?:[-_]?password)?|reset(?:[-_]?password)?|password[-_]?(?:reset|recovery))(?:\/|$)/i;
+  if (loginPath.test(current.pathname)) return false;
+  if (await page.getByRole('button', { name: /log[ -]?out|sign[ -]?out/i }).first().isVisible().catch(() => false) ||
+    await page.getByRole('link', { name: /log[ -]?out|sign[ -]?out/i }).first().isVisible().catch(() => false)) return true;
   const dashboard = page.getByRole('heading', { name: /dashboard|overview|workspace|appointments|patients|analytics|projects/i }).first();
-  return await dashboard.isVisible().catch(() => false) &&
-    await page.locator('nav:visible, aside:visible, [role="navigation"]:visible').count() > 0;
+  if (!await dashboard.isVisible().catch(() => false)) return false;
+  if (await page.locator('nav:visible, aside:visible, [role="navigation"]:visible').count() > 0) return true;
+  if (current.origin === initial.origin && current.pathname === initial.pathname) return false;
+  const internalLinks = await page.locator('a[href]:visible').evaluateAll(links => links.filter(link => {
+    try { return new URL((link as HTMLAnchorElement).href).origin === location.origin; } catch { return false; }
+  }).length);
+  return internalLinks >= 3;
 }
 
-/** A private, unrecorded sign-in. Only its in-memory storage state is returned. */
+/** A private, unrecorded sign-in. Only its in-memory storage snapshots are returned. */
 export async function automatedSignIn(browser: Browser, project: Project, credentials: SignInCredentials,
-  ai: LocalAI, signal: AbortSignal, onLog: (message: string) => Promise<void>): Promise<BrowserState> {
+  ai: LocalAI, signal: AbortSignal, onLog: (message: string) => Promise<void>): Promise<SavedLogin> {
   check(signal);
   const loginUrl = credentials.loginUrl || project.brief.url;
   if (!allowed(loginUrl, project)) fail('The sign-in URL must use an allowed product origin.');
@@ -222,6 +233,7 @@ export async function automatedSignIn(browser: Browser, project: Project, creden
     const password = page.locator('input[type="password"]:visible').first();
     try { await password.waitFor({ state: 'visible', timeout: 10_000 }); }
     catch { check(signal); fail('A password sign-in form was not found. Use manual sign-in for SSO or another authentication flow.'); }
+    const formUrl = page.url();
     let captcha = await captchaState(page);
     if (captcha.present && !credentials.attemptCaptcha)
       fail('This sign-in requires a CAPTCHA. Enable the visible CAPTCHA attempt for this run, or use manual sign-in.');
@@ -272,10 +284,27 @@ export async function automatedSignIn(browser: Browser, project: Project, creden
     while (Date.now() < deadline) {
       check(signal);
       if (!allowed(page.url(), project)) fail('Sign-in left the allowed product origins. Add the required sign-in origin and retry.');
-      const success = await authenticated(page, loginUrl);
+      const success = await authenticated(page, formUrl);
       if (success && previousSuccess) {
+        const storageState = await context.storageState({ indexedDB: true });
+        const snapshots = new Map<string, [string, string][]>();
+        for (const current of context.pages()) for (const frame of current.frames()) {
+          if (!allowed(frame.url(), project)) continue;
+          try {
+            const snapshot = await frame.evaluate(() => ({ origin: location.origin, entries: Object.entries(sessionStorage) }));
+            // Recheck the evaluated origin in case a frame navigated while
+            // authentication was being saved. Third-party frames stay excluded.
+            if (allowed(snapshot.origin, project)) snapshots.set(snapshot.origin, snapshot.entries);
+          } catch {
+            if (frame === page.mainFrame())
+              fail('The authenticated session could not be saved. Retry sign-in or use the unrecorded sign-in browser.');
+          }
+        }
+        check(signal);
+        if (!await authenticated(page, formUrl))
+          fail('Sign-in changed before its session could be saved. Retry sign-in or use the unrecorded sign-in browser.');
         await onLog('Product sign-in completed. Beginning exploration with the authenticated session.');
-        return await context.storageState({ indexedDB: true });
+        return { storageState, sessionStorage: [...snapshots].map(([origin, entries]) => ({ origin, entries })) };
       }
       previousSuccess = success;
       await pause(700, signal);
