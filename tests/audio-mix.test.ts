@@ -51,6 +51,17 @@ async function decoded(file:string):Promise<Float64Array>{
   return samples;
 }
 
+function assertSamePcm(actual:Float64Array,expected:Float64Array,message:string):void{
+  let mismatches=Math.abs(actual.length-expected.length),first=-1,maxDelta=0;
+  for(let frame=0;frame<Math.min(actual.length,expected.length);frame++){
+    if(Object.is(actual[frame],expected[frame]))continue;
+    mismatches++;if(first<0)first=frame;
+    maxDelta=Math.max(maxDelta,Math.abs(actual[frame]-expected[frame]));
+  }
+  // Keep exact equality, without asking assert to format hundreds of thousands of samples.
+  assert.equal(mismatches,0,`${message} Samples: ${actual.length}/${expected.length}; first mismatch: ${first}; maximum delta: ${maxDelta}.`);
+}
+
 function rms(samples:ArrayLike<number>,start=0,end=samples.length):number{
   let sum=0;for(let i=start;i<end;i++)sum+=samples[i]**2;return Math.sqrt(sum/Math.max(1,end-start));
 }
@@ -112,7 +123,7 @@ test('music off and zero volume preserve speech, while disabling both audio laye
     const zero=await mix(directory,'zero-volume',video,voice,{backgroundMusic:true,musicVolume:0});
     const silent=await mix(directory,'silent',video,undefined,{backgroundMusic:false,musicVolume:.24});
     const a=await decoded(off),b=await decoded(zero),silence=await decoded(silent);
-    assert.deepEqual(a,b,'Music off and zero volume must produce exactly the same untouched speech mix.');
+    assertSamePcm(a,b,'Music off and zero volume must produce exactly the same untouched speech mix.');
     assert.ok(Math.abs(correlationLag(speech.samples,a,Math.round(.9*RATE),Math.round(1.8*RATE)))<=1);
     assert.ok(rms(silence)<1e-8,'Turning both layers off must not expose the completed input movie’s old audio.');
     assert.equal(await pictureHash(silent),await pictureHash(video));
@@ -125,7 +136,7 @@ test('remixing from an already mixed film replaces its audio rather than stackin
     const {video,voice}=await fixture(directory),voiceHash=createHash('sha256').update(await readFile(voice)).digest('hex');
     const first=await mix(directory,'first',video,voice,{backgroundMusic:true,musicVolume:.24});
     const second=await mix(directory,'second',first,voice,{backgroundMusic:true,musicVolume:.24});
-    assert.deepEqual(await decoded(second),await decoded(first),'Reusing the original speech and score must be independent of the input movie’s audio.');
+    assertSamePcm(await decoded(second),await decoded(first),'Reusing the original speech and score must be independent of the input movie’s audio.');
     assert.equal(await pictureHash(first),await pictureHash(second));
     assert.equal(createHash('sha256').update(await readFile(voice)).digest('hex'),voiceHash);
   }finally{await rm(directory,{recursive:true,force:true});}
