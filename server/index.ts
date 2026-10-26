@@ -136,7 +136,8 @@ app.get('/artifacts/:id/:filename',(req,res,next)=>{
       `${kind}-narration.txt`,`${kind}-narration.srt`,`${kind}-captions.srt`,`${kind}-captions.vtt`,
       ...(p.outputs.some(output=>output.kind===kind&&output.narrated)?[`${kind}-narration.wav`,`${kind}-narration-timing.json`]:[])
     ]);
-    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt','captions.vtt']:[]),...(p.outputs.some(output=>output.narrated)?['narration.wav','narration-timing.json']:[]),...perFilm]);
+    const shared=!p.filmPlans?[...(p.scenes.length?['narration.txt','narration.srt','captions.srt','captions.vtt']:[]),...(p.outputs.some(output=>output.narrated)?['narration.wav','narration-timing.json']:[])]:[];
+    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json']:[]),...shared,...perFilm]);
     if(!available.has(filename))return res.status(404).end();
     res.setHeader('Cache-Control','no-store');res.sendFile(path.join(store.dir(id),filename),{dotfiles:'allow'},error=>{if(error&&!res.headersSent&&!res.destroyed)next(error);});
   }catch(error){next(error);}

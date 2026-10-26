@@ -22,6 +22,7 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   await writeFile(path.join(store.dir(p.id),'captions.vtt'),'WEBVTT\n\n00:00:00.300 --> 00:00:01.800\nVoice timed words\n');
   await writeFile(path.join(store.dir(p.id),'promo-captions.vtt'),'WEBVTT\n\n00:00:00.300 --> 00:00:02.800\nA distinct motion film script.\n');
   await writeFile(path.join(store.dir(p.id),'promo-narration.wav'),'fixture-promo-voice');
+  await writeFile(path.join(store.dir(p.id),'narration.wav'),'stale-legacy-voice');
   await writeFile(path.join(store.dir(p.id),'stale.mp4'),Buffer.from('old export'));
   const probe=createServer();await new Promise<void>(resolve=>probe.listen(0,'127.0.0.1',resolve));
   const port=(probe.address() as {port:number}).port;await new Promise<void>(resolve=>probe.close(()=>resolve()));
@@ -41,6 +42,8 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   assert.equal((await fetch(`${base}/artifacts/${p.id}/promo-captions.vtt`)).status,200);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/promo-narration.wav`)).status,200);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo-narration.wav`)).status,404);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/narration.wav`)).status,404,'Independent films must not expose the stale shared voice from their earlier edit.');
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/captions.vtt`)).status,404,'Independent films use their own caption clocks.');
   const cross=await fetch(base+'/api/sample',{method:'POST',headers:{'content-type':'application/json',origin:'https://hostile.example'},body:'{}'});assert.equal(cross.status,403);
   const mediaType=await fetch(base+'/api/sample',{method:'POST',headers:{'content-type':'text/plain'},body:'{}'});assert.equal(mediaType.status,415);
   // Fetch normalizes Host on recent Node versions; use a raw HTTP request for the rebinding case.
@@ -56,7 +59,7 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   assert.deepEqual(cameraProject.outputs.map((output:{kind:string})=>output.kind),['promo']);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo.mp4`)).status,404);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/promo.mp4`)).status,200);
-  assert.match(await (await fetch(`${base}/artifacts/${p.id}/captions.vtt`)).text(),/00:00:00.300 --> 00:00:01.800/,'Focus-only edits must preserve the completed promo’s real spoken timing.');
+  assert.match(await (await fetch(`${base}/artifacts/${p.id}/promo-captions.vtt`)).text(),/00:00:00.300 --> 00:00:02.800/,'Focus-only edits must preserve the completed promo’s real spoken timing.');
   const newDemo={scenes:[{...p.scenes[0],narration:'A changed walkthrough script.',duration:5,camera:{contextHold:1,moveDuration:1.5,releaseDuration:.5},transition:{type:'dissolve',duration:.7}}],targetDuration:5};
   const edited=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({filmPlans:{demo:newDemo}})});
   assert.equal(edited.status,200);const editedProject=await edited.json();assert.equal(editedProject.scenes[0].duration,5);
