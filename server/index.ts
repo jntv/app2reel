@@ -108,7 +108,7 @@ app.post('/api/projects/:id/explore',asyncRoute(async(req,res)=>{
 }));
 app.post('/api/projects/:id/login',asyncRoute(async(req,res)=>{
   pipeline.assertIdle();const body=z.object({loginUrl:z.string().url().optional(),credentials:z.object({username:z.string().min(1).max(500),password:z.string().min(1).max(1000)}).strict().optional()}).strict().parse(req.body);
-  await openLogin(store.get(String(req.params.id)),body.loginUrl,body.credentials);res.json({message:body.credentials?'Credentials filled in the unrecorded browser. Complete the CAPTCHA and sign in; Capture will save the session automatically.':'Sign in in the unrecorded browser. Capture will save the session automatically.'});
+  await openLogin(store.get(String(req.params.id)),body.loginUrl,body.credentials);res.json({message:body.credentials?'Credentials filled in the unrecorded browser. Complete the CAPTCHA and sign in; App2Reel will save the session automatically.':'Sign in in the unrecorded browser. App2Reel will save the session automatically.'});
 }));
 app.get('/api/projects/:id/login/status',asyncRoute(async(req,res)=>{const p=store.get(String(req.params.id));res.json(loginStatus(p.id));}));
 app.post('/api/projects/:id/login/complete',asyncRoute(async(req,res)=>{
@@ -157,6 +157,6 @@ if(existsSync(path.join(root,'dist/index.html'))&&(process.env.NODE_ENV==='produ
   vite=await createViteServer({root,server:{middlewareMode:true,hmr:false},appType:'spa'});
   app.use(vite.middlewares);
 }
-const server=app.listen(port,'127.0.0.1',()=>console.log(`Capture Studio is ready at http://127.0.0.1:${port}`));
+const server=app.listen(port,'127.0.0.1',()=>console.log(`App2Reel is ready at http://127.0.0.1:${port}`));
 async function shutdown(){await closeNarration();await clearSessions();await vite?.close();server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),2000).unref();}
 process.on('SIGINT',()=>void shutdown());process.on('SIGTERM',()=>void shutdown());

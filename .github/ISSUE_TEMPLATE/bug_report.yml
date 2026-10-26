@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a reproducible problem in App2Reel.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share a minimal reproduction using the sample project or fictional data where possible.
+        For a security vulnerability, follow SECURITY.md in this repository and keep details out of public issues.
+  - type: input
+    id: version
+    attributes:
+      label: App2Reel version or commit
+      placeholder: "For example: 0.1.0 or a commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: operating_system
+    attributes:
+      label: Operating system and architecture
+      placeholder: "For example: macOS 15, Apple Silicon"
+    validations:
+      required: true
+  - type: input
+    id: tools
+    attributes:
+      label: Node.js, package manager, and Codex CLI versions
+      description: "Run node --version, pnpm --version (or npm --version), and codex --version."
+    validations:
+      required: true
+  - type: dropdown
+    id: voice
+    attributes:
+      label: Voice engine or choice
+      description: Select the choice used when the problem occurred.
+      options:
+        - Not related to narration
+        - Narration disabled
+        - Natural - Indian English (MeloTTS)
+        - Natural - Heart or Michael (Kokoro)
+        - Designed Indian English (Qwen)
+        - System fallback
+        - Other or unknown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include relevant settings, such as sample mode, resolution, film format, and narration choice.
+      placeholder: |
+        1. Start App2Reel with ...
+        2. Open the sample project ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: A sanitized short video or screenshot can help demonstrate the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Sanitized error output
+      description: Remove credentials, session data, private URLs, account details, and personal information. Do not attach raw captures or .capture directories.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Public report check
+      options:
+        - label: I have removed credentials, tokens, personal information, and private capture data from this report and its attachments.
+          required: true

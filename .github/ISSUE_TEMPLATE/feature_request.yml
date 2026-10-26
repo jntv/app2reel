@@ -1,0 +1,31 @@
+name: Feature request
+description: Describe a user goal App2Reel could support better.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to accomplish?
+      description: Describe who needs this and the film or workflow they want to create.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is difficult today?
+      description: Describe the current workflow and any workaround you have tried.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would a useful result look like?
+      description: Give a concrete example. Suggested implementations are welcome, but optional.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include relevant platform, voice, output format, or examples using fictional data. Keep credentials and private capture data out of public issues.

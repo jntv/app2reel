@@ -2,9 +2,9 @@ erp:
   workspace_slug: ""
   project_id: ""
 repository:
-  provider: "local"
-  external_id: ""
-  default_branch: "unknown"
+  provider: "github"
+  external_id: "jntv/app2reel"
+  default_branch: "main"
 documents:
   product: "project-context/product.md"
   technical_design: "project-context/technical-design.md"
