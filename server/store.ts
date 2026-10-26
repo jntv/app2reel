@@ -17,8 +17,14 @@ export const briefSchema = z.object({
 }).strict();
 
 export const renderSettingsSchema = z.object({
-  motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean()
+  motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean(),
+  narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional()
 }).strict();
+
+const colorSchema=z.string().regex(/^#[0-9a-f]{6}$/i);
+export const productThemeSchema=z.object({accent:colorSchema,secondary:colorSchema.optional(),background:colorSchema,surface:colorSchema,text:colorSchema,mutedText:colorSchema,border:colorSchema,fontFamily:z.string().max(100).regex(/^[a-zA-Z0-9 ,._-]+$/),fontAsset:z.string().regex(/^[a-zA-Z0-9_-]+\.(woff2?|ttf|otf)$/).optional(),radius:z.number().min(0).max(32),sourceUrl:z.string().url().max(2000),extractedAt:z.string().max(40),source:z.enum(['computed','screenshots'])}).strict();
+const rectangleSchema=z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),width:z.number().min(.001).max(1),height:z.number().min(.001).max(1)}).strict().refine(value=>value.x+value.width<=1+1e-8&&value.y+value.height<=1+1e-8,'The region must fit inside the recording.');
+const visualModelSchema=z.object({heading:z.string().max(100).optional(),labels:z.array(z.string().max(70)).max(12),layout:z.enum(['dashboard','table','calendar','form','analytics','workspace']),accent:colorSchema.optional()}).strict();
 
 export const sceneSchema = z.object({
   id:z.string().min(1).max(100),title:z.string().min(1).max(160),caption:z.string().max(360),
@@ -27,7 +33,8 @@ export const sceneSchema = z.object({
   recordingStart:z.number().nonnegative().optional(),recordingEnd:z.number().nonnegative().optional(),
   feature:z.string().max(200).optional(),
   focus:z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),zoom:z.number().min(1).max(2.4)}).strict().optional(),
-  redactions:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),width:z.number().min(.001).max(1),height:z.number().min(.001).max(1)}).strict().refine(value=>value.x+value.width<=1+1e-8&&value.y+value.height<=1+1e-8,'Privacy masks must fit inside the recording.')).max(8).optional()
+  focusArea:rectangleSchema.optional(),visualModel:visualModelSchema.optional(),
+  redactions:z.array(rectangleSchema).max(8).optional()
 }).strict();
 
 export class Store {

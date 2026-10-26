@@ -27,5 +27,14 @@ test('recorded exploration captures actual pointer clicks and normalized movemen
     assert.ok(result.cursorTrack.filter(point=>point.kind==='click').length>=3,'Trusted pointerdown events must be captured.');
     for(const point of result.cursorTrack){assert.ok(point.x>=0&&point.x<=1&&point.y>=0&&point.y<=1);assert.ok(point.at>=0&&point.at<=result.duration);assert.deepEqual(Object.keys(point).sort(),['at','kind','x','y']);}
     assert.ok(shots.every((shot,i)=>shot.at<result.duration&&(!i||shot.at>shots[i-1].at)));
+    for(let i=1;i<shots.length;i++){
+      assert.equal(shots[i].entryStart,shots[i-1].actionStart,'Each view must retain the real interaction that entered it.');
+      assert.equal(shots[i].entrySettled,shots[i-1].actionEnd);
+      assert.ok(shots[i].entryStart!<shots[i].entrySettled!&&shots[i].entrySettled!<=shots[i].at);
+    }
+    assert.equal(result.productTheme?.source,'computed');
+    assert.equal(result.productTheme?.sourceUrl,url+'/');
+    assert.ok(shots.every(shot=>shot.visualModel?.labels.length&&shot.focusArea));
+    assert.ok(!JSON.stringify(shots.map(shot=>shot.visualModel)).includes('Alex Lee'),'Visual models must exclude profile and card content.');
   } finally { await rm(directory,{recursive:true,force:true});await new Promise<void>(resolve=>server.close(()=>resolve())); }
 });

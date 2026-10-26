@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chromium, type Browser } from 'playwright';
 import { promoTemplate } from '../server/promo-template.js';
 import type { FilmState } from '../server/film-state.js';
+import type { ProductTheme } from '../shared/types.js';
 
 let browser: Browser;
 before(async () => { browser = await chromium.launch({ headless: true }); });
@@ -13,6 +14,11 @@ const state: FilmState = {
   feature: 'Leads and enquiries', url: 'https://dashboard.smartsevak.com', scene: 1, scenes: 7,
   progress: .5, totalProgress: .22, time: 7.5,
   subtitle: 'Bring every enquiry into the flow of your work.', subtitleWord: 2,
+};
+const productTheme: ProductTheme = {
+  accent: '#0099dc', secondary: '#1e2b3e', background: '#f8f9fa', surface: '#ffffff',
+  text: '#172235', mutedText: '#748095', border: '#dce2e8', fontFamily: 'Arial, sans-serif', radius: 11,
+  source: 'screenshots', sourceUrl: 'https://dashboard.smartsevak.com', extractedAt: '2026-10-27T00:00:00.000Z',
 };
 const setState = (page: import('playwright').Page, value: FilmState) => page.evaluate(
   s => (window as unknown as { setFilmState(s: FilmState): Promise<void> }).setFilmState(s), value,
@@ -60,4 +66,28 @@ test('feature, caption, title, subtitles and CTA stay inside both export sizes',
     assert.equal(await page.locator('#cta-url').textContent(), 'dashboard.smartsevak.com');
     await page.close();
   }
+});
+
+test('promo inherits product palette, component geometry and observed model labels', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  await page.setContent(promoTemplate(1280, 720, productTheme));
+  await setState(page, { ...state, visualModel: { heading: 'Lead Management', labels: ['LEAD NAME', 'PHONE', 'BRANCH', 'LEAD STAGE', 'Open', 'Closed', 'All'], layout: 'table' } });
+  assert.equal(await page.locator('.model-heading').textContent(), 'Lead Management');
+  assert.deepEqual(await page.locator('.table-head span').allTextContents(), ['LEAD NAME', 'PHONE', 'BRANCH', 'LEAD STAGE']);
+  assert.equal(await page.locator('.model').evaluate(el => getComputedStyle(el).borderRadius), '11px');
+  assert.equal(await page.locator('.stage').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(248, 249, 250)');
+  assert.equal(await page.locator('.search-button').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 153, 220)');
+  assert.equal(await page.locator('.brand-mark,.torus,img,video').count(), 0);
+  await page.close();
+});
+
+test('analytics schematic preserves an empty workspace and observed controls', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  await page.setContent(promoTemplate(1280, 720, productTheme));
+  await setState(page, { ...state, feature: 'Growth and reporting', title: 'Choose your reporting view', visualModel: { heading: 'Analytics and Insights', labels: ['Date Range', 'Date Field', 'Dashboard'], layout: 'analytics' } });
+  assert.equal(await page.locator('.analytics-model').count(), 1);
+  assert.equal(await page.locator('.analytics-model .graph').count(), 0, 'an empty captured reporting view must not acquire a populated chart');
+  assert.deepEqual(await page.locator('.analytics-model .filter-field small').allTextContents(), ['Date Range', 'Date Field', 'Dashboard']);
+  assert.match(await page.locator('.workspace-blank').textContent() || '', /Choose a dashboard/);
+  await page.close();
 });

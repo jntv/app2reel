@@ -1,10 +1,11 @@
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import type { Project, Shot, Finding, CursorSample } from '../shared/types.js';
+import type { Project, Shot, Finding, CursorSample, ProductTheme, ProductVisualModel, PrivacyMask } from '../shared/types.js';
 import type { LocalAI } from './ai.js';
 import { automatedSignIn, type SignInCredentials } from './signin.js';
 import { LoginSessions, applySavedLogin } from './login-sessions.js';
+import { extractProductDesign, captureProductFont } from './product-theme.js';
 
 export type Credentials = SignInCredentials;
 const loginSessions=new LoginSessions();
@@ -50,6 +51,7 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
   const browser=await chromium.launch({headless:!credentials?.attemptCaptcha});
   let context:BrowserContext|undefined;
   let recording:string|undefined;
+  let productTheme:ProductTheme|undefined;
   const cursorTrack:CursorSample[]=[];
   const rawDir=path.join(directory,'raw');await mkdir(rawDir,{recursive:true,mode:0o700});
   try {
@@ -93,6 +95,7 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
     try {
       await page.goto(project.brief.url,{waitUntil:'domcontentloaded',timeout:45000});await page.waitForTimeout(900);
       const history:string[]=[];
+      let entryStart:number|undefined,entrySettled:number|undefined;
       const samplePages=['Overview','Projects','Analytics','Team'];
       const steps=project.brief.sample?samplePages.length:project.brief.maxSteps;
       for(let step=0;step<steps;step++) {
@@ -100,6 +103,21 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
         await rejectLogin();
         const obs=await observe(page);
         if(!allowedURL(page.url(),project))throw new Error('Browser left the allowed product origins.');
+        let visualModel:ProductVisualModel|undefined;
+        let focusArea:PrivacyMask|undefined;
+        try {
+          const design=await extractProductDesign(page,project.brief.features);
+          visualModel=design.visualModel;
+          focusArea=design.focusArea;
+          if(!productTheme){
+            productTheme=design.theme;
+            const fontAsset=await captureProductFont(page,directory,productTheme.fontFamily,signal);
+            if(fontAsset)productTheme.fontAsset=fontAsset;
+          }
+        } catch {
+          abort(signal);
+          if(!productTheme&&step===0)await onLog('Product styling could not be read from this view; exploration will continue.');
+        }
         const shotName=`shot-${String(step+1).padStart(3,'0')}.png`;
         const capturedAt=(Date.now()-start)/1000;
         await page.screenshot({path:path.join(directory,shotName),animations:'disabled',mask:[page.locator('input[type=password],input[autocomplete=cc-number],input[autocomplete=cc-csc]')]});
@@ -114,11 +132,12 @@ Product brief: ${JSON.stringify({...project.brief,url:cleanURL(project.brief.url
 Explore deeply across requested features and user roles when accessible. Avoid repeating actions. Only mark observedFeature if the CURRENT view clearly proves a requested feature. Use its exact name. Empty observedFeature/evidence when none. Choose done when adequate coverage or login/MFA is required. For click/type use an exact elementId from observation. type only search/filter, never sensitive input. scroll text='down' or 'up'. navigate must stay within allowed origins. Do not put secrets or URL query strings in output. History: ${history.slice(-15).join('\n')}
 Current observation: ${JSON.stringify({...obs,elements:obs.elements.map(e=>({...e,href:cleanURL(e.href)}))})}`,actionSchema,{imagePath:path.join(directory,shotName),signal});
         }
-        const shot:Shot={id:`shot-${step+1}`,title:obs.title||`View ${step+1}`,url:obs.url,screenshot:shotName,at:capturedAt,action:next.reason.slice(0,300)};
+        const shot:Shot={id:`shot-${step+1}`,title:obs.title||`View ${step+1}`,url:obs.url,screenshot:shotName,at:capturedAt,action:next.reason.slice(0,300),entryStart,entrySettled,...(visualModel?{visualModel}:{}),...(focusArea?{focusArea}:{})};
         const feature=project.brief.features.find(f=>f.toLowerCase()===next.observedFeature.toLowerCase());
         await onShot(shot,feature?{feature,status:'observed',evidence:next.evidence.slice(0,1200),screenshot:shotName}:undefined);
         history.push(`${obs.url}: ${next.action} ${next.elementId} ${next.reason}`);
         if(next.action==='done'){await page.waitForTimeout(1800);break;}
+        shot.actionStart=(Date.now()-start)/1000;
         try {
           if(['click','type'].includes(next.action)) {
             const el=obs.elements.find(e=>e.id===next.elementId);if(!el)throw new Error('Element no longer available');
@@ -140,6 +159,8 @@ Current observation: ${JSON.stringify({...obs,elements:obs.elements.map(e=>({...
           else if(next.action==='navigate'){if(!allowedURL(next.url,project))throw new Error('Navigation outside allowed origins');await page.goto(next.url,{waitUntil:'domcontentloaded',timeout:30000});}
           else if(next.action==='back')await page.goBack({waitUntil:'domcontentloaded',timeout:15000});
           await page.waitForTimeout(project.brief.sample?2200:1100);await rejectLogin();
+          shot.actionEnd=(Date.now()-start)/1000;
+          if(next.action!=='wait'){entryStart=shot.actionStart;entrySettled=shot.actionEnd;}
         } catch(error){abort(signal);await onLog(`Skipped an unavailable or restricted action: ${(error as Error).message.slice(0,180)}`);}
       }
       await rejectLogin();finished=true;
@@ -149,6 +170,6 @@ Current observation: ${JSON.stringify({...obs,elements:obs.elements.map(e=>({...
       if(video&&finished&&!containsLogin&&!signal.aborted){const original=await video.path();recording='capture.webm';await rename(original,path.join(directory,recording));}
       await rm(rawDir,{recursive:true,force:true});
     }
-    return {recording,duration:(Date.now()-start)/1000,cursorTrack:recording?cursorTrack.sort((a,b)=>a.at-b.at):[]};
+    return {recording,duration:(Date.now()-start)/1000,cursorTrack:recording?cursorTrack.sort((a,b)=>a.at-b.at):[],...(recording&&productTheme?{productTheme}:{})};
   } finally {await context?.close().catch(()=>{});await browser.close();await rm(rawDir,{recursive:true,force:true});}
 }

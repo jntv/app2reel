@@ -4,12 +4,13 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { Store, briefSchema, sceneSchema, renderSettingsSchema } from './store.js';
+import { Store, briefSchema, sceneSchema, renderSettingsSchema, productThemeSchema } from './store.js';
 import { LocalAI } from './ai.js';
 import { Pipeline } from './pipeline.js';
 import { browserAvailable, clearSessions, completeLogin, discardSession, loginStatus, openLogin } from './browser.js';
 import { ffmpegAvailable } from './render.js';
 import { fixtureHTML } from './fixture.js';
+import { narrationEngine } from './narration.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const port=Number(process.env.PORT||4310);
@@ -30,7 +31,7 @@ app.use((req,res,next)=>{
 app.use(express.json({limit:'100kb'}));
 const asyncRoute=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>(req:express.Request,res:express.Response,next:express.NextFunction)=>{void fn(req,res).catch(next);};
 
-app.get('/api/health',asyncRoute(async(_req,res)=>res.json({ai:await ai.status(),browser:await browserAvailable(),ffmpeg:await ffmpegAvailable(),version:'0.1.0'})));
+app.get('/api/health',asyncRoute(async(_req,res)=>res.json({ai:await ai.status(),browser:await browserAvailable(),ffmpeg:await ffmpegAvailable(),narration:!!narrationEngine(),version:'0.1.0'})));
 app.post('/api/auth/login',asyncRoute(async(_req,res)=>{pipeline.assertIdle();res.json(await ai.login());}));
 app.get('/api/projects',(_req,res)=>res.json([...store.projects.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))));
 app.post('/api/projects',asyncRoute(async(req,res)=>{
@@ -43,28 +44,36 @@ app.post('/api/sample',asyncRoute(async(_req,res)=>res.status(201).json(await st
   features:['Workspace overview','Project tracking','Team analytics','Team directory'],brandColor:'#95b978',duration:30,resolution:'1080p',maxSteps:8,sample:true
 })))));
 app.get('/api/projects/:id',asyncRoute(async(req,res)=>res.json(store.get(String(req.params.id)))));
+app.post('/api/projects/:id/design',asyncRoute(async(req,res)=>{
+  z.object({}).strict().parse(req.body);res.json(await pipeline.refreshDesign(store.get(String(req.params.id))));
+}));
 app.put('/api/projects/:id',asyncRoute(async(req,res)=>{
   pipeline.assertIdle();const p=store.get(String(req.params.id));
-  const patch=z.object({brief:briefSchema.partial().optional(),scenes:z.array(sceneSchema).min(1).max(12).optional(),renderSettings:renderSettingsSchema.optional()}).strict().parse(req.body);
+  const patch=z.object({brief:briefSchema.partial().optional(),scenes:z.array(sceneSchema).min(1).max(12).optional(),renderSettings:renderSettingsSchema.optional(),productTheme:productThemeSchema.optional()}).strict().parse(req.body);
+  if(patch.productTheme&&new URL(patch.productTheme.sourceUrl).origin!==new URL(patch.brief?.url||p.brief.url).origin)throw new Error('The product theme must come from this product URL.');
   if(patch.brief){
     if(patch.brief.sample!==undefined&&patch.brief.sample!==p.brief.sample)throw new Error('Sample mode cannot be changed.');
     if(p.brief.sample&&patch.brief.url&&patch.brief.url!==p.brief.url)throw new Error('Create a new project to explore another URL.');
     const previous=JSON.stringify(p.brief);p.brief=briefSchema.parse({...p.brief,...patch.brief});
-    if(previous!==JSON.stringify(p.brief)){await discardSession(p.id);p.stage='draft';p.error=undefined;p.scenes=[];p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.cursorTrack=undefined;p.message='Brief updated. Explore again to record the updated product.';}
+    if(previous!==JSON.stringify(p.brief)){await discardSession(p.id);p.stage='draft';p.error=undefined;p.scenes=[];p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.cursorTrack=undefined;p.productTheme=undefined;p.message='Brief updated. Explore again to record the updated product.';}
   }
   if(patch.scenes){
     if(patch.scenes.reduce((a,s)=>a+s.duration,0)>90)throw new Error('Total film duration must be 90 seconds or less.');
     const permitted=new Set(p.shots.map(s=>s.screenshot));
     for(const s of patch.scenes){if(s.screenshot&&!permitted.has(s.screenshot))throw new Error('Storyboard can only use captured screenshots.');if(s.recordingStart!==undefined&&s.recordingEnd!==undefined&&s.recordingEnd<=s.recordingStart)throw new Error('Clip end must be after its start.');}
-    const promoStory=(scenes:typeof p.scenes)=>JSON.stringify(scenes.map(s=>[s.title,s.caption,s.narration,s.duration,s.feature||'']));
+    const promoStory=(scenes:typeof p.scenes)=>JSON.stringify(scenes.map(s=>[s.title,s.caption,s.narration,s.duration,s.feature||'',s.visualModel]));
     const samePromo=promoStory(p.scenes)===promoStory(patch.scenes);
-    p.scenes=patch.scenes;p.outputs=samePromo?p.outputs.filter(output=>output.kind==='promo'):[];p.stage='review';await pipeline.exportPlan(p);
+    p.scenes=patch.scenes;p.outputs=samePromo?p.outputs.filter(output=>output.kind==='promo'):[];p.stage='review';
   }
   if(patch.renderSettings){
     p.renderSettings=patch.renderSettings;p.outputs=[];p.error=undefined;
     if(p.scenes.length)p.stage='review';
     p.message='Film style saved. Render the films to apply your changes.';
   }
+  if(patch.productTheme){
+    p.productTheme=patch.productTheme;p.outputs=[];p.error=undefined;if(p.scenes.length)p.stage='review';p.message='Product design saved. Render the films to apply it.';
+  }
+  if(p.scenes.length&&(patch.scenes||patch.renderSettings||patch.productTheme))await pipeline.exportPlan(p);
   await store.save(p);res.json(p);
 }));
 app.post('/api/projects/:id/explore',asyncRoute(async(req,res)=>{
@@ -96,8 +105,8 @@ app.get('/api/projects/:id/events',(req,res,next)=>{
 app.get('/artifacts/:id/:filename',(req,res,next)=>{
   try{
     const id=String(req.params.id),filename=String(req.params.filename);const p=store.get(id);
-    if(!/^[a-zA-Z0-9._-]+\.(png|jpg|mp4|webm|json|txt|srt|vtt)$/.test(filename)||filename==='project.json')return res.status(404).end();
-    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt','captions.vtt']:[])]);
+    if(!/^[a-zA-Z0-9._-]+\.(png|jpg|mp4|webm|wav|json|txt|srt|vtt)$/.test(filename)||filename==='project.json')return res.status(404).end();
+    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt','captions.vtt']:[]),...(p.outputs.some(output=>output.narrated)?['narration.wav','narration-timing.json']:[])]);
     if(!available.has(filename))return res.status(404).end();
     res.setHeader('Cache-Control','no-store');res.sendFile(path.join(store.dir(id),filename),{dotfiles:'allow'},error=>{if(error&&!res.headersSent&&!res.destroyed)next(error);});
   }catch(error){next(error);}

@@ -88,10 +88,21 @@ export async function extractRecordedCursorTrack(recording: string, intervals: {
 }
 
 /** Do not bridge missing detections: a stale ring must not float over another product location. */
-export function cursorAt(track: CursorPoint[], at: number): { x: number; y: number; click?: boolean } | undefined {
-  let before: CursorPoint | undefined, after: CursorPoint | undefined;
-  for (const point of track) { if (point.at <= at) before = point; else { after = point; break; } }
-  if (!before || at - before.at > 0.55) return undefined;
+export function cursorAt(track: CursorPoint[], at: number, maxStaleness = 0.55): { x: number; y: number; click?: boolean } | undefined {
+  let position = -1;
+  for (let index = 0; index < track.length; index += 1) { if (track[index].at <= at) position = index; else break; }
+  const before = track[position], after = track[position + 1], previous = track[position - 1], next = track[position + 2];
+  if (!before || at - before.at > maxStaleness) return undefined;
   const t = after && after.at - before.at <= 0.55 ? Math.max(0, Math.min(1, (at - before.at) / Math.max(0.001, after.at - before.at))) : 0;
-  return { x: before.x + ((after?.x ?? before.x) - before.x) * t, y: before.y + ((after?.y ?? before.y) - before.y) * t, click: before.kind === 'click' && at - before.at < 0.09 };
+  const coordinate = (key: 'x' | 'y'): number => {
+    if (!after || !t) return before[key];
+    const delta = (after[key] - before[key]) / Math.max(0.001, after.at - before.at);
+    const harmonic = (a: number, b: number) => a * b <= 0 ? 0 : 2 * a * b / (a + b);
+    const left = previous && before.at - previous.at <= 0.55 ? harmonic((before[key] - previous[key]) / Math.max(0.001, before.at - previous.at), delta) : delta;
+    const right = next && next.at - after.at <= 0.55 ? harmonic(delta, (next[key] - after[key]) / Math.max(0.001, next.at - after.at)) : delta;
+    const t2 = t * t, t3 = t2 * t, span = after.at - before.at;
+    const value = (2 * t3 - 3 * t2 + 1) * before[key] + (t3 - 2 * t2 + t) * left * span + (-2 * t3 + 3 * t2) * after[key] + (t3 - t2) * right * span;
+    return Math.max(Math.min(before[key], after[key]), Math.min(Math.max(before[key], after[key]), value));
+  };
+  return { x: coordinate('x'), y: coordinate('y'), click: before.kind === 'click' && at - before.at < 0.09 };
 }

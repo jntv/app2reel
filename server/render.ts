@@ -9,6 +9,8 @@ import type { FilmState } from './film-state.js';
 import { promoTemplate } from './promo-template.js';
 import { renderDynamicDemo } from './demo-renderer.js';
 import { subtitleAt, subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
+import { prepareNarration } from './narration.js';
+import { productFontCss, resolveFilmTheme } from './film-theme.js';
 
 const FPS = 30;
 const MAX_SECONDS = 90;
@@ -119,8 +121,7 @@ function soundtrack(duration: number): string {
   return `aevalsrc='${pad}+${kick}+${bass}+${hats}':s=48000:d=${duration}`;
 }
 
-async function writeNarration(directory: string, scenes: TimedScene[]): Promise<void> {
-  const cues = subtitleCues(scenes);
+async function writeNarration(directory: string, scenes: TimedScene[], cues=subtitleCues(scenes)): Promise<void> {
   await Promise.all([
     writeFile(path.join(directory, 'narration.srt'), subtitleSrt(cues), 'utf8'),
     writeFile(path.join(directory, 'captions.srt'), subtitleSrt(cues), 'utf8'),
@@ -131,9 +132,11 @@ async function writeNarration(directory: string, scenes: TimedScene[]): Promise<
 
 async function renderPromo(
   project: Project, temporary: string, scenes: TimedScene[], stateAt: (index: number, progress: number, totalFrame: number) => FilmState, page: Page,
-  width: number, height: number, update: (progress: number, message: string) => void, signal?: AbortSignal,
+  width: number, height: number, update: (progress: number, message: string) => void, signal?: AbortSignal, fontCss='',
 ): Promise<string> {
-  await page.setContent(promoTemplate(width, height, project.brief.brandColor));
+  await page.setContent(promoTemplate(width, height, resolveFilmTheme(project)));
+  if(fontCss)await page.addStyleTag({content:fontCss});
+  await page.evaluate(()=>document.fonts.ready.then(()=>{}));
   const output = path.join(temporary, 'promo.mp4');
   const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
   const duration = totalFrames / FPS;
@@ -196,7 +199,8 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     options.onProgress?.(0, 'Preparing local video assets');
     const settings = { ...DEFAULT_RENDER_SETTINGS, ...project.renderSettings };
     const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
-    const cues = subtitleCues(scenes);
+    const narration=settings.narration!==false?await prepareNarration(scenes,temporary,runEncoder,options.signal):undefined;
+    const cues = narration?.cues||subtitleCues(scenes);
     const stateAt = (index: number, progress: number, totalFrame: number): FilmState => {
       const scene = scenes[index];
       const time = (totalFrame + 0.5) / FPS;
@@ -204,7 +208,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
         name: safeText(project.brief.name, 80), title: safeText(scene.title, 160), caption: safeText(scene.caption, 360),
         feature: safeText(scene.feature || `Chapter ${String(index + 1).padStart(2, '0')}`, 100), url: humanUrl(project.brief.url),
         scene: index, scenes: scenes.length, progress, totalProgress: (totalFrame + 0.5) / totalFrames, time,
-        motion: settings.motion, focus: scene.focus,
+        motion: settings.motion, focus: scene.focus, focusArea: scene.focusArea, visualModel: scene.visualModel,
         ...(settings.subtitles ? subtitleAt(cues, time) : { subtitle: '', subtitleWord: -1 }),
       };
     };
@@ -216,17 +220,23 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     const page = await context.newPage();
     // Rendering is offline; neither film can fetch network assets.
     await page.route('**/*', route => route.abort());
+    const fontCss=await productFontCss(directory,resolveFilmTheme(project));
     const outputs: VideoOutput[] = [];
     const finished: { temporary: string; output: string }[] = [];
     for (let index = 0; index < selected.length; index += 1) {
       const kind = selected[index];
       const update = (progress: number, message: string) => options.onProgress?.(Math.min(99, Math.round((index + progress) / selected.length * 99)), message);
-      const file = kind === 'demo'
+      let file = kind === 'demo'
         ? await renderDynamicDemo({ project, directory, temporary, scenes, page, width, height, fps: FPS,
           recording: await containedFile(directory, project.recording || ''), update, signal: options.signal, stateAt,
-          encoder, runEncoder, encodingOptions, soundtrack })
-        : await renderPromo(project, temporary, scenes, stateAt, page, width, height, update, options.signal);
+          encoder, runEncoder, encodingOptions, soundtrack, theme:resolveFilmTheme(project),fontCss })
+        : await renderPromo(project, temporary, scenes, stateAt, page, width, height, update, options.signal,fontCss);
       aborted(options.signal);
+      if(narration){
+        const narrated=path.join(temporary,`${kind}-narrated.mp4`);
+        await runEncoder(['-i',file,'-i',narration.file,'-f','lavfi','-i',soundtrack(duration),'-filter_complex',`[2:a]volume=0.18,afade=t=in:d=0.7,afade=t=out:st=${Math.max(0,duration-1)}:d=1[music];[1:a][music]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[audio]`,'-map','0:v:0','-map','[audio]','-c:v','copy','-c:a','aac','-b:a','192k','-ac','2','-t',String(duration),'-movflags','+faststart',narrated],options.signal);
+        file=narrated;
+      }
       const relative = `${kind}.mp4`;
       const poster = `${kind}-poster.jpg`;
       const posterFile = path.join(temporary, poster);
@@ -237,11 +247,12 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       aborted(options.signal);
       finished.push({ temporary: file, output: path.join(directory, relative) });
       finished.push({ temporary: posterFile, output: path.join(directory, poster) });
-      outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration });
+      outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration, narrated:!!narration });
     }
     // Publish only after every requested encode succeeds, preserving previous outputs on failure.
-    await writeNarration(temporary, scenes);
+    await writeNarration(temporary, scenes,cues);
     finished.push(...['narration.srt', 'narration.txt', 'captions.srt', 'captions.vtt'].map(file => ({ temporary: path.join(temporary, file), output: path.join(directory, file) })));
+    if(narration)finished.push(...['narration.wav','narration-timing.json'].map(file=>({temporary:path.join(temporary,file),output:path.join(directory,file)})));
     for (const item of finished) await rename(item.temporary, item.output);
     options.onProgress?.(100, 'Videos ready');
     return outputs;

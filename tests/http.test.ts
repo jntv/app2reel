@@ -14,10 +14,11 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   const store=new Store(data);await store.init();
   const p=await store.create(briefSchema.parse({name:'Fixture',url:'https://example.com',description:'An integration test product',purpose:'Verify media access',actors:'Test users',features:['View products']}));
   p.stage='complete';p.scenes=[{id:'scene-1',title:'A scene',caption:'A caption',narration:'Words',duration:3}];
-  p.outputs=[{kind:'demo',file:'demo.mp4',poster:'demo-poster.jpg',width:1280,height:720,fps:30,duration:3},{kind:'promo',file:'promo.mp4',width:1280,height:720,fps:30,duration:3}];await store.save(p);
+  p.outputs=[{kind:'demo',file:'demo.mp4',poster:'demo-poster.jpg',width:1280,height:720,fps:30,duration:3},{kind:'promo',file:'promo.mp4',width:1280,height:720,fps:30,duration:3,narrated:true}];await store.save(p);
   await writeFile(path.join(store.dir(p.id),'demo.mp4'),Buffer.from('0123456789'));
   await writeFile(path.join(store.dir(p.id),'demo-poster.jpg'),Buffer.from('fixture-poster'));
   await writeFile(path.join(store.dir(p.id),'promo.mp4'),Buffer.from('completed graphics-only promo'));
+  await writeFile(path.join(store.dir(p.id),'captions.vtt'),'WEBVTT\n\n00:00:00.300 --> 00:00:01.800\nVoice timed words\n');
   await writeFile(path.join(store.dir(p.id),'stale.mp4'),Buffer.from('old export'));
   const probe=createServer();await new Promise<void>(resolve=>probe.listen(0,'127.0.0.1',resolve));
   const port=(probe.address() as {port:number}).port;await new Promise<void>(resolve=>probe.close(()=>resolve()));
@@ -25,7 +26,7 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   let logs='';server.stdout.on('data',b=>{logs+=b;});server.stderr.on('data',b=>{logs+=b;});
   t.after(async()=>{server.kill('SIGTERM');await new Promise<void>(resolve=>{if(server.exitCode!==null)return resolve();const timer=setTimeout(()=>{server.kill('SIGKILL');resolve();},3500);server.once('exit',()=>{clearTimeout(timer);resolve();});});await rm(temporary,{recursive:true,force:true});});
   const base=`http://127.0.0.1:${port}`;let ready=false;
-  for(let i=0;i<100;i++) {try{if((await fetch(base+'/api/projects')).ok){ready=true;break;}}catch{/* wait for local server */}await new Promise(resolve=>setTimeout(resolve,50));}
+  for(let i=0;i<400;i++) {try{if((await fetch(base+'/api/projects')).ok){ready=true;break;}}catch{/* wait for local server under parallel browser load */}await new Promise(resolve=>setTimeout(resolve,50));}
   assert.ok(ready,logs);
   const media=await fetch(`${base}/artifacts/${p.id}/demo.mp4`,{headers:{range:'bytes=0-3'}});
   assert.equal(media.status,206);assert.equal(await media.text(),'0123');
@@ -42,16 +43,25 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   assert.equal(invalidFocus.status,400);
   const invalidMask=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],redactions:[{x:.8,y:.1,width:.3,height:.4}]}]})});
   assert.equal(invalidMask.status,400);
+  const invalidOutline=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],focusArea:{x:.9,y:.1,width:.4,height:.3}}]})});
+  assert.equal(invalidOutline.status,400);
   const cameraOnly=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],focus:{x:.6,y:.5,zoom:1.4},redactions:[{x:.1,y:.2,width:.3,height:.4}]}]})});
   assert.equal(cameraOnly.status,200);const cameraProject=await cameraOnly.json();
   assert.deepEqual(cameraProject.outputs.map((output:{kind:string})=>output.kind),['promo']);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo.mp4`)).status,404);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/promo.mp4`)).status,200);
+  assert.match(await (await fetch(`${base}/artifacts/${p.id}/captions.vtt`)).text(),/00:00:00.300 --> 00:00:01.800/,'Focus-only edits must preserve the completed promo’s real spoken timing.');
   const styled=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({renderSettings:{motion:'subtle',subtitles:false,cursorHighlights:false}})});
   assert.equal(styled.status,200);const styledProject=await styled.json();
   assert.deepEqual(styledProject.renderSettings,{motion:'subtle',subtitles:false,cursorHighlights:false});
   assert.equal(styledProject.scenes.length,1);assert.deepEqual(styledProject.outputs,[]);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo-poster.jpg`)).status,404);
+  const theme={accent:'#0a8fdc',secondary:'#1e293b',background:'#fafafa',surface:'#ffffff',text:'#111827',mutedText:'#64748b',border:'#e0e0e0',fontFamily:'Poppins',radius:12,sourceUrl:'https://example.com/dashboard',extractedAt:new Date().toISOString(),source:'computed'};
+  const alienTheme=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({productTheme:{...theme,sourceUrl:'https://other.example/dashboard'}})});
+  assert.equal(alienTheme.status,400);
+  const branded=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({productTheme:theme,renderSettings:{motion:'cinematic',subtitles:true,cursorHighlights:true,narration:true,themeSource:'product'}})});
+  assert.equal(branded.status,200);const themedProject=await branded.json();assert.equal(themedProject.productTheme.accent,'#0a8fdc');assert.equal(themedProject.renderSettings.narration,true);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/narration.wav`)).status,404,'A voiceover may only be downloaded after a narrated film is rendered.');
   const changed=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({brief:{description:'Updated product description'}})});assert.equal(changed.status,200);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo.mp4`)).status,404);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo-poster.jpg`)).status,404);

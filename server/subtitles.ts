@@ -1,6 +1,6 @@
 import type { Scene } from '../shared/types.js';
 
-export interface SubtitleCue { start: number; end: number; text: string; words: string[]; }
+export interface SubtitleCue { start: number; end: number; text: string; words: string[]; wordStarts?: number[]; }
 
 /** One short readable phrase per cue; the same timeline drives pixels and downloads. */
 export function subtitleCues(scenes: readonly Pick<Scene, 'narration'|'caption'|'duration'>[]): SubtitleCue[] {
@@ -33,7 +33,8 @@ export function subtitleAt(cues: readonly SubtitleCue[], time: number): { subtit
   const cue = cues.find(value => time >= value.start && time < value.end);
   if (!cue) return { subtitle: '', subtitleWord: -1 };
   const progress = Math.max(0, Math.min(1, (time - cue.start) / (cue.end - cue.start)));
-  return { subtitle: cue.text, subtitleWord: Math.min(cue.words.length - 1, Math.floor(progress * cue.words.length)) };
+  let timed:number|undefined;if(cue.wordStarts){timed=0;for(let i=0;i<cue.wordStarts.length;i++)if(time>=cue.wordStarts[i])timed=i;}
+  return { subtitle: cue.text, subtitleWord: timed!==undefined?Math.max(0,timed):Math.min(cue.words.length - 1, Math.floor(progress * cue.words.length)) };
 }
 
 function timestamp(value: number, decimal: ','|'.'): string {

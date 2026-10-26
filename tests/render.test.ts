@@ -9,11 +9,12 @@ import { chromium } from 'playwright';
 import ffmpeg from 'ffmpeg-static';
 import { renderVideos } from '../server/render.js';
 import type { Project } from '../shared/types.js';
+import { narrationEngine } from '../server/narration.js';
 
 const available = Boolean(ffmpeg && existsSync(chromium.executablePath()));
 function fixture(): Project {
   return { id:'fixture', brief:{name:'Fixture',url:'https://example.com',description:'A graphic product story',purpose:'Explain the product',actors:'Owners',features:['Overview'],brandColor:'#a78bfa',duration:10,resolution:'720p',maxSteps:3,allowedOrigins:[],allowWrites:false,sample:true},
-    createdAt:'',updatedAt:'',stage:'review',progress:0,message:'',logs:[],sources:[],findings:[],shots:[],outputs:[],
+    createdAt:'',updatedAt:'',stage:'review',progress:0,message:'',logs:[],sources:[],findings:[],shots:[],outputs:[],renderSettings:{motion:'cinematic',subtitles:true,cursorHighlights:true,narration:false},
     scenes:[{id:'scene',title:'Ideas in motion',caption:'A connected workspace',narration:'Bring your work into focus.',duration:1.2,screenshot:'does-not-exist.png'}] };
 }
 
@@ -47,4 +48,18 @@ test('cancelled dynamic rendering preserves previous completed media and removes
     assert.equal(await readFile(path.join(directory,'promo.mp4'),'utf8'),'previous completed output');
     assert.ok(!(await readdir(directory)).some(file=>file.startsWith('.render-')));
   } finally { await rm(directory,{recursive:true,force:true}); }
+});
+
+test('narrated film contains a real spoken track and exports its audible timing',{skip:!available||!narrationEngine()},async()=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'capture-spoken-film-'));
+  try{
+    const project=fixture();project.scenes=[{...project.scenes[0],narration:'Meet your workspace.',duration:2}];project.renderSettings!.narration=true;
+    const [output]=await renderVideos(project,directory,['promo']);assert.equal(output.narrated,true);assert.equal(output.duration,2);
+    const timing=JSON.parse(await readFile(path.join(directory,'narration-timing.json'),'utf8'));
+    assert.ok(timing.cues[0].start>0);assert.ok(timing.cues.at(-1).end<2);
+    assert.ok((await readFile(path.join(directory,'narration.wav'))).length>10000);
+    const audio=spawnSync(ffmpeg!,['-v','error','-i',path.join(directory,'promo.mp4'),'-vn','-ar','16000','-ac','1','-f','s16le','pipe:1']);
+    assert.equal(audio.status,0,audio.stderr.toString());let energy=0;for(let i=0;i<audio.stdout.length;i+=2)energy+=(audio.stdout.readInt16LE(i)/32768)**2;
+    assert.ok(Math.sqrt(energy/(audio.stdout.length/2))>.025,'The exported film must contain audible narration, not only the quiet music bed.');
+  }finally{await rm(directory,{recursive:true,force:true});}
 });

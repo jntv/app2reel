@@ -6,6 +6,8 @@ import { LocalAI } from './ai.js';
 import { cleanURL, exploreBrowser, type Credentials } from './browser.js';
 import { renderVideos } from './render.js';
 import { subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
+import { refreshProductDesign, refineThemeFromScreenshots } from './product-theme.js';
+import { directShot } from './shot-direction.js';
 
 const researchSchema={type:'object',properties:{sources:{type:'array',items:{type:'object',properties:{title:{type:'string'},url:{type:'string'},summary:{type:'string'}},required:['title','url','summary'],additionalProperties:false}}},required:['sources'],additionalProperties:false};
 const planSchema={type:'object',properties:{scenes:{type:'array',items:{type:'object',properties:{title:{type:'string'},caption:{type:'string'},narration:{type:'string'},shotIndex:{type:'integer'},feature:{type:'string'}},required:['title','caption','narration','shotIndex','feature'],additionalProperties:false}}},required:['scenes'],additionalProperties:false};
@@ -16,6 +18,15 @@ export class Pipeline {
   isBusy(id?:string){return !!this.job && (!id||this.job.id===id);}
   assertIdle(){if(this.job)throw Object.assign(new Error('A studio job is already running. Finish or cancel it first.'),{status:409});}
   cancel(id:string){if(this.job?.id===id)this.job.controller.abort();}
+  async refreshDesign(p:Project){
+    this.assertIdle();const controller=new AbortController();this.job={id:p.id,controller};
+    try{
+      await this.store.log(p,'Reading the product’s colors, typography, and component styling.');
+      const design=await refreshProductDesign(p,this.store.dir(p.id),controller.signal);
+      p.productTheme=p.shots.length?await refineThemeFromScreenshots(this.store.dir(p.id),p.shots,design.theme,controller.signal):design.theme;p.outputs=[];p.error=undefined;if(p.scenes.length)p.stage='review';
+      await this.exportPlan(p);await this.store.log(p,'Product design captured. Render your films to apply it.');return p;
+    }finally{this.job=undefined;}
+  }
   private async start(p:Project,work:(signal:AbortSignal)=>Promise<void>) {
     this.assertIdle();const controller=new AbortController();this.job={id:p.id,controller};
     void work(controller.signal).catch(async(error)=>{
@@ -42,7 +53,7 @@ export class Pipeline {
         p.progress=Math.min(75,15+(p.shots.length/(p.brief.sample?4:p.brief.maxSteps))*60);await this.store.save(p);
       },message=>this.store.log(p,message),credentials);
       if(signal.aborted)throw new Error('Run cancelled');
-      p.recording=result.recording;p.cursorTrack=result.cursorTrack;if(!p.shots.length||!p.recording)throw new Error('Exploration did not produce usable product footage.');
+      p.recording=result.recording;p.cursorTrack=result.cursorTrack;p.productTheme=result.productTheme;if(!p.shots.length||!p.recording)throw new Error('Exploration did not produce usable product footage.');
       p.progress=80;await this.store.log(p,'Turning observed product moments into a film storyboard.');
       let planned:{title:string;caption:string;narration:string;shotIndex:number;feature:string}[];
       if(p.brief.sample)planned=p.shots.map((s,i)=>({title:['A little clarity. A lot of progress.','Big ideas. Clear next steps.','Your momentum, made visible.','Better work starts together.'][i],caption:['Meet Orbit. One home for your team’s best work.','See every project, priority, and next step.','Turn your team’s progress into clear insights.','Bring your people and projects into flow.'][i],narration:['Meet Orbit, a shared workspace that helps teams move with clarity.','Keep projects organized and see what matters, all in one place.','Explore delivery trends and understand your team’s momentum.','Bring everyone together around their best work.'][i],shotIndex:i,feature:p.brief.features[i]}));
@@ -54,11 +65,16 @@ export class Pipeline {
       p.scenes=valid.map((s,i):Scene=>{
         const shot=p.shots[s.shotIndex],next=p.shots[s.shotIndex+1];
         const minimumClip=Math.min(0.5,result.duration);
-        const recordingStart=Math.min(Math.max(0,shot.at-0.4),Math.max(0,result.duration-minimumClip));
-        const recordingEnd=Math.min(result.duration,Math.max(recordingStart+minimumClip,next?.at??result.duration));
+        const recordingStart=Math.min(Math.max(0,(shot.entryStart??shot.at)-0.35),Math.max(0,result.duration-minimumClip));
+        const sceneDuration=p.brief.duration/valid.length;
+        const recordingEnd=Math.min(result.duration,Math.max(recordingStart+minimumClip,Math.min(shot.actionStart??next?.entryStart??next?.at??result.duration,Math.max((shot.entrySettled??shot.at)+.8,recordingStart+sceneDuration))));
         return {id:`scene-${i+1}`,title:s.title.slice(0,160),caption:s.caption.slice(0,360),narration:s.narration.slice(0,2000),duration:Math.round(p.brief.duration/valid.length*100)/100,screenshot:shot.screenshot,feature:s.feature,
-          recordingStart,recordingEnd};
+          recordingStart,recordingEnd,visualModel:shot.visualModel,focusArea:shot.focusArea};
       });
+      if(!p.brief.sample)for(let i=0;i<p.scenes.length;i++){
+        p.progress=85+Math.round(i/p.scenes.length*12);await this.store.log(p,`Directing camera and feature highlights for scene ${i+1} of ${p.scenes.length}.`);
+        Object.assign(p.scenes[i],await directShot(p.scenes[i],p.shots[valid[i].shotIndex],this.store.dir(p.id),this.ai,signal));
+      }
       p.stage='review';p.progress=100;await this.exportPlan(p);await this.store.log(p,'Your storyboard is ready. Review the scenes, then render your two films.');
     });
   }
@@ -78,12 +94,16 @@ export class Pipeline {
     const directory=this.store.dir(p.id);
     const cues=subtitleCues(p.scenes);
     await Promise.all([
-      writeFile(path.join(directory,'storyboard.json'),JSON.stringify({product:p.brief.name,scenes:p.scenes,findings:p.findings,renderSettings:p.renderSettings},null,2)),
+      writeFile(path.join(directory,'storyboard.json'),JSON.stringify({product:p.brief.name,scenes:p.scenes,findings:p.findings,renderSettings:p.renderSettings,productTheme:p.productTheme},null,2)),
       writeFile(path.join(directory,'research.json'),JSON.stringify({sources:p.sources,findings:p.findings},null,2)),
       writeFile(path.join(directory,'narration.txt'),p.scenes.map((s,i)=>`${i+1}. ${s.title}\n${s.narration}`).join('\n\n')),
-      writeFile(path.join(directory,'captions.srt'),subtitleSrt(cues)),
-      writeFile(path.join(directory,'narration.srt'),subtitleSrt(cues)),
-      writeFile(path.join(directory,'captions.vtt'),subtitleVtt(cues))
+      // Completed films remain authoritative while only camera/masks change or a rerender is pending.
+      // renderVideos stages replacement speech timing and publishes it only on success.
+      ...(!p.outputs.some(output=>output.narrated)?[
+        writeFile(path.join(directory,'captions.srt'),subtitleSrt(cues)),
+        writeFile(path.join(directory,'narration.srt'),subtitleSrt(cues)),
+        writeFile(path.join(directory,'captions.vtt'),subtitleVtt(cues))
+      ]:[])
     ]);
   }
 }

@@ -1,20 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cameraAt, cameraForFrame, cameraProjection, demoLayout, projectCursor } from '../server/demo-motion.js';
+import { attentionBounds, cameraAt, cameraForFrame, cameraKeys, cameraProjection, clipTiming, demoLayout, projectCursor, sourceTime } from '../server/demo-motion.js';
 import { cursorAt, detectOrangeCursor } from '../server/cursor-detection.js';
 import type { FilmState } from '../server/film-state.js';
 
 const state: FilmState = { name: 'Product', title: 'Workspace', caption: 'A recorded workflow', feature: 'Overview', url: 'example.test', scene: 0, scenes: 1, progress: 0, totalProgress: 0, time: 0, focus: { x: 0.6, y: 0.4, zoom: 1.65 } };
 
-test('camera stays within the original product across extreme authored focus points', () => {
+test('camera starts with the entire source and preserves aspect within the canvas', () => {
   const layout = demoLayout(1920, 1080);
-  assert.equal(layout.width, 1786);
+  assert.ok(layout.width / 1920 > 0.93);
+  for (const x of [0, 1]) for (const y of [0, 1]) assert.equal(projectCursor({ x, y }, { x: 0.5, y: 0.5, zoom: 1 }, layout).visible, true);
   for (const x of [0, 0.1, 0.5, 0.9, 1]) for (const y of [0, 0.5, 1]) for (const zoom of [1, 1.4, 2.4]) {
     const p = cameraProjection({ x, y, zoom }, layout);
-    assert.ok(p.x >= p.sourceX - 1e-8);
-    assert.ok(p.y >= p.sourceY - 1e-8);
-    assert.ok(p.x + 1 / p.zoom <= p.sourceX + p.sourceWidth + 1e-8);
-    assert.ok(p.y + 1 / p.zoom <= p.sourceY + p.sourceHeight + 1e-8);
+    assert.ok(p.x >= -1e-8 && p.y >= -1e-8);
+    assert.ok(p.x + 1 / p.zoom <= 1 + 1e-8);
+    assert.ok(p.y + 1 / p.zoom <= 1 + 1e-8);
     // Original x/y dimensions project at the same scale: no anisotropic stretch.
     assert.ok(Math.abs(p.sourceWidth * layout.width / (p.sourceHeight * layout.height) - 16 / 9) < 1e-8);
   }
@@ -25,7 +25,41 @@ test('zoom is visibly dynamic while subtle motion remains bounded', () => {
   const middle = cameraAt({ ...state, progress: 0.6 });
   assert.ok(middle.zoom - start.zoom > 0.3);
   assert.ok(cameraAt({ ...state, motion: 'subtle', progress: 0.6 }).zoom <= 1.47);
-  assert.equal(cameraAt({ ...state, focus: { x: -5, y: 4, zoom: 99 } }).x, 0);
+  assert.equal(cameraAt({ ...state, progress: 0.6, focus: { x: -5, y: 4, zoom: 99 } }).x, 0);
+});
+
+test('camera follows one push and release while holding steady despite cursor movement', () => {
+  const layout = demoLayout(1920, 1080);
+  const keys = cameraKeys(state, 181, layout);
+  assert.deepEqual(cameraForFrame(keys, 0), { x: 0.5, y: 0.5, zoom: 1 });
+  assert.deepEqual(cameraForFrame(keys, 180), { x: 0.5, y: 0.5, zoom: 1 });
+  assert.deepEqual(cameraForFrame(keys, 100), cameraForFrame(keys, 130));
+  assert.deepEqual(cameraAt({ ...state, progress: 0.6, cursor: { x: 0, y: 0 } }), cameraAt({ ...state, progress: 0.6, cursor: { x: 1, y: 1 } }));
+  const zooms = Array.from({ length: 181 }, (_, i) => cameraForFrame(keys, i).zoom);
+  assert.ok(zooms.slice(0, 79).every((z, i, values) => i === 0 || z >= values[i - 1]));
+  assert.ok(zooms.slice(145).every((z, i, values) => i === 0 || z <= values[i - 1]));
+});
+
+test('whole feature regions and real cursor evidence remain in frame during a push', () => {
+  const layout = demoLayout(1920, 1080);
+  for (const area of [{ x: 0.15, y: 0.08, width: 0.8, height: 0.16 }, { x: 0.2, y: 0.08, width: 0.6, height: 0.83 }]) {
+    const cursors = [{ x: 0.02, y: 0.4 }, { x: 0.92, y: 0.2 }];
+    const bounds = attentionBounds(area, cursors);
+    const keys = cameraKeys({ ...state, focusArea: area }, 181, layout, bounds);
+    for (let frame = 0; frame < 181; frame += 1) {
+      const camera = cameraForFrame(keys, frame);
+      for (const point of [...cursors, { x: area.x, y: area.y }, { x: area.x + area.width, y: area.y + area.height }]) assert.equal(projectCursor(point, camera, layout).visible, true, `Lost a feature or cursor in frame ${frame}`);
+    }
+  }
+});
+
+test('short clips play at normal speed then hold; long clips never exceed 1.12x', () => {
+  const short = clipTiming(6.5, 8.8, 6);
+  assert.equal(short.playbackRate, 1);
+  assert.equal(sourceTime(short, 5), 8.8);
+  const long = clipTiming(10, 25, 6);
+  assert.ok(long.playbackRate <= 1.12);
+  assert.ok(Math.abs(sourceTime(long, 6) - (10 + 6 * 1.12)) < 1e-9);
 });
 
 test('camera interpolation and projected pointer are continuous and correctly registered', () => {
