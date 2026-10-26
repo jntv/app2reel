@@ -50,7 +50,7 @@ app.put('/api/projects/:id',asyncRoute(async(req,res)=>{
     if(patch.brief.sample!==undefined&&patch.brief.sample!==p.brief.sample)throw new Error('Sample mode cannot be changed.');
     if(p.brief.sample&&patch.brief.url&&patch.brief.url!==p.brief.url)throw new Error('Create a new project to explore another URL.');
     const previous=JSON.stringify(p.brief);p.brief=briefSchema.parse({...p.brief,...patch.brief});
-    if(previous!==JSON.stringify(p.brief)){await discardSession(p.id);p.stage='draft';p.scenes=[];p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.message='Brief updated. Explore again to record the updated product.';}
+    if(previous!==JSON.stringify(p.brief)){await discardSession(p.id);p.stage='draft';p.error=undefined;p.scenes=[];p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.message='Brief updated. Explore again to record the updated product.';}
   }
   if(patch.scenes){
     if(patch.scenes.reduce((a,s)=>a+s.duration,0)>90)throw new Error('Total film duration must be 90 seconds or less.');
@@ -61,12 +61,12 @@ app.put('/api/projects/:id',asyncRoute(async(req,res)=>{
   await store.save(p);res.json(p);
 }));
 app.post('/api/projects/:id/explore',asyncRoute(async(req,res)=>{
-  const body=z.object({credentials:z.object({username:z.string().min(1).max(500),password:z.string().min(1).max(1000),loginUrl:z.string().url().optional()}).strict().optional()}).strict().parse(req.body);
+  const body=z.object({credentials:z.object({username:z.string().min(1).max(500),password:z.string().min(1).max(1000),loginUrl:z.string().url().optional(),attemptCaptcha:z.boolean().optional()}).strict().optional()}).strict().parse(req.body);
   const p=store.get(String(req.params.id));await pipeline.explore(p,body.credentials);res.status(202).json(p);
 }));
 app.post('/api/projects/:id/login',asyncRoute(async(req,res)=>{
-  pipeline.assertIdle();const body=z.object({loginUrl:z.string().url().optional()}).strict().parse(req.body);
-  await openLogin(store.get(String(req.params.id)),body.loginUrl);res.json({message:'Sign in in the browser window, then choose Login complete. This window is not recorded.'});
+  pipeline.assertIdle();const body=z.object({loginUrl:z.string().url().optional(),credentials:z.object({username:z.string().min(1).max(500),password:z.string().min(1).max(1000)}).strict().optional()}).strict().parse(req.body);
+  await openLogin(store.get(String(req.params.id)),body.loginUrl,body.credentials);res.json({message:body.credentials?'Credentials filled in the unrecorded browser. Complete the CAPTCHA and sign in, then choose I’ve finished signing in.':'Sign in in the browser window, then choose I’ve finished signing in. This window is not recorded.'});
 }));
 app.post('/api/projects/:id/login/complete',asyncRoute(async(req,res)=>{
   await completeLogin(store.get(String(req.params.id)).id);res.json({message:'Session saved in memory for the next exploration. It expires in one hour.'});

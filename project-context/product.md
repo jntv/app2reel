@@ -18,6 +18,7 @@ Help a product owner turn a product name, description, purpose, URL, actors and 
 | REQ-006 | Approved: polished live demo video | Real recorded interactions, selected clips, captions, scene timing, soundtrack and 30fps H.264 export implemented. Sample recordings and encodes verified. Quality remains template-based and reviewable. |
 | REQ-007 | Approved: motion/3D promotional video | Deterministic perspective product cards, kinetic text, geometry and soundtrack; actual MP4 export verified. Arbitrary bespoke CGI/VFX and generative video are not implemented in this first release. |
 | REQ-008 | Implementation choice: review before export | Editable scene titles/captions/narration/duration; user starts both renders. Narration scripts exported without generated speech. |
+| REQ-009 | Approved 2026-10-26: app itself should attempt sign-in and required CAPTCHA for the supplied SmartSevak test | Optional per-run CAPTCHA authorization; isolated, unrecorded sign-in; masked/cropped screenshot decisions; bounded visible challenge clicks; verified authenticated navigation. Live SmartSevak attempts reached the CAPTCHA but did not complete it (latest: four steps); authenticated exploration/videos remain blocked on human sign-in. Manual fallback can fill supplied credentials locally. Seven local sign-in fixtures and the full17-test suite passed. |
 
 ## Constraints and open decisions
 

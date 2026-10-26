@@ -3,9 +3,10 @@ import { mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Project, Shot, Finding } from '../shared/types.js';
 import type { LocalAI } from './ai.js';
+import { automatedSignIn, type SignInCredentials } from './signin.js';
 
 type BrowserState = Awaited<ReturnType<BrowserContext['storageState']>>;
-export type Credentials = {username:string;password:string;loginUrl?:string};
+export type Credentials = SignInCredentials;
 type Login = { browser:Browser; context:BrowserContext; timer:ReturnType<typeof setTimeout> };
 const pendingLogins=new Map<string,Login>();
 const sessions=new Map<string,{state:BrowserState;expires:number;timer:ReturnType<typeof setTimeout>}>();
@@ -15,14 +16,22 @@ export function cleanURL(value:string) { try {const u=new URL(value);return u.or
 export function allowedURL(value:string,project:Project) { try{const u=new URL(value);return ['http:','https:'].includes(u.protocol) && !u.username && !u.password && [new URL(project.brief.url).origin,...project.brief.allowedOrigins.map(v=>new URL(v).origin)].includes(u.origin);}catch{return false;} }
 export function browserAvailable(){return import('node:fs').then(({existsSync})=>existsSync(chromium.executablePath()));}
 function abort(signal:AbortSignal){if(signal.aborted)throw new Error('Run cancelled');}
-export async function openLogin(project:Project, loginUrl?:string) {
+export async function openLogin(project:Project, loginUrl?:string,credentials?:Pick<Credentials,'username'|'password'>) {
   const url=loginUrl||project.brief.url;if(!allowedURL(url,project)) throw new Error('Add the login URL origin to allowed origins first.');
   await clearLogin(project.id);
   const browser=await chromium.launch({headless:false});
   const context=await browser.newContext({viewport:{width:1440,height:900},acceptDownloads:false});
   const timer=setTimeout(()=>void clearLogin(project.id),15*60*1000);timer.unref();
   pendingLogins.set(project.id,{browser,context,timer});
-  try{const page=await context.newPage();await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});}catch(error){await clearLogin(project.id);throw error;}
+  try{
+    const page=await context.newPage();await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+    if(credentials){
+      if(!allowedURL(page.url(),project))throw new Error('The sign-in page left the allowed origins.');
+      const password=page.locator('input[type=password]:visible').first();await password.waitFor({timeout:10000});
+      await page.locator('input[type=email]:visible,input[autocomplete=username]:visible,input[name*=email i]:visible,input[name*=user i]:visible,input[type=text]:visible').first().fill(credentials.username);
+      await password.fill(credentials.password);
+    }
+  }catch{await clearLogin(project.id);throw new Error('The unrecorded sign-in browser could not be prepared. Check the sign-in URL or open it without automatic field filling.');}
 }
 export async function completeLogin(id:string) {
   const login=pendingLogins.get(id);if(!login)throw new Error('Open the sign-in browser first. Sign-in sessions expire after 15 minutes.');
@@ -44,22 +53,6 @@ async function scope(context:BrowserContext,project:Project,login=false) {
   });
   context.on('page',p=>{p.on('dialog',d=>void d.dismiss());p.on('download',d=>void d.cancel());if(context.pages().length>1) void p.close();});
 }
-async function loginWithCredentials(browser:Browser,project:Project,credentials:Credentials) {
-  const loginUrl=credentials.loginUrl||project.brief.url;if(!allowedURL(loginUrl,project))throw new Error('Login URL must be on an allowed origin.');
-  const context=await browser.newContext({acceptDownloads:false});await scope(context,project,true);
-  try {
-    const page=await context.newPage();await page.goto(loginUrl,{waitUntil:'domcontentloaded',timeout:45000});
-    const password=page.locator('input[type=password]').first();await password.waitFor({timeout:8000});
-    const username=page.locator('input[type=email],input[autocomplete=username],input[name*=email i],input[name*=user i],input[type=text]').first();
-    await username.fill(credentials.username);await password.fill(credentials.password);
-    const submit=page.getByRole('button',{name:/^(sign in|log in|login|continue)$/i}).first();
-    if(await submit.count())await submit.click();else await password.press('Enter');
-    await page.waitForTimeout(2000);
-    if(await password.isVisible().catch(()=>false))throw new Error('Login needs another step. Use the manual sign-in browser for MFA, SSO, or CAPTCHA.');
-    return await context.storageState({indexedDB:true});
-  } catch {throw new Error('Automatic sign-in could not complete. Use the unrecorded manual sign-in browser for MFA, SSO, or another login step.');}
-  finally { await context.close(); }
-}
 
 export interface Observation {url:string;title:string;text:string;elements:{id:number;tag:string;label:string;type:string;href:string}[];}
 export async function observe(page:Page):Promise<Observation> {
@@ -79,13 +72,14 @@ export const actionSchema={type:'object',properties:{
 type Action={action:string;elementId:number;text:string;url:string;reason:string;observedFeature:string;evidence:string};
 
 export async function exploreBrowser(project:Project,directory:string,ai:LocalAI,signal:AbortSignal,onShot:(shot:Shot,finding?:Finding)=>Promise<void>,onLog:(s:string)=>Promise<void>,credentials?:Credentials) {
-  const browser=await chromium.launch({headless:true});
+  const browser=await chromium.launch({headless:!credentials?.attemptCaptcha});
   let context:BrowserContext|undefined;
   let recording:string|undefined;
   const rawDir=path.join(directory,'raw');await mkdir(rawDir,{recursive:true,mode:0o700});
   try {
     const saved=sessions.get(project.id);if(saved)clearTimeout(saved.timer);sessions.delete(project.id);
-    const state=credentials?await loginWithCredentials(browser,project,credentials):(saved&&saved.expires>Date.now()?saved.state:undefined);
+    if(credentials)await onLog('Signing into the product in an unrecorded browser.');
+    const state=credentials?await automatedSignIn(browser,project,credentials,ai,signal,onLog):(saved&&saved.expires>Date.now()?saved.state:undefined);
     abort(signal);
     const size={width:1920,height:1080};
     context=await browser.newContext({viewport:size,deviceScaleFactor:1,storageState:state,acceptDownloads:false,recordVideo:{dir:rawDir,size},serviceWorkers:'block'});
