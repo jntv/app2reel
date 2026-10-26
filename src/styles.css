@@ -12,3 +12,43 @@
 .field>.field-label{font-size:inherit;font-weight:inherit;color:inherit}.field-label b{display:inline;font-size:9px;font-weight:400;color:#d18d76;margin-left:3px}.advanced-hint{font-size:10px;line-height:1.8;color:#9caa8c;margin:16px 0 0 42px}
 /* Keep supporting copy readable against the warm canvas. */
 .field small,.form-section-title p,.form-bottom>span,.advanced-toggle>small,.advanced-hint{color:#78846c}.discovery-panel>p,.exploration-steps small,.field-description,.privacy-note,.access-heading small,.log-entry p,.log-empty>span,.boundaries>div,.finding p,.research-panel p,.shot>small,.tab-intro p,.storyboard-note,.storyboard-save>span,.export-card-body>p,.export-details,.deliverables-panel p,.export-footnote{color:#7c8e6b}.log-entry time,.finding small,.setup-footnote,.setup-modal>p,.setup-modal .setup-detail,.text-button{color:#83976e}.export-title>span{color:#839e67}.setup-checks>div{color:#708a58}.setup-modal h2{color:#526a3f}.export-awaiting{color:#7c9860}.local-note span{color:#92a185}.project-nav-text small{color:#92a185}.local-note strong{color:#b2c0a4}
+
+/* Film direction controls share the studio's quiet, practical editing language. */
+.film-style-panel{border:1px solid #dfe2d5;background:var(--paper);border-radius:7px;padding:25px 27px;margin:0 0 26px}
+.film-style-heading{display:flex;align-items:start;gap:13px;margin-bottom:23px}
+.film-style-heading>.icon-tile{background:#f1f2e9;color:#83916f;margin-top:2px}
+.film-style-heading .eyebrow{font-size:7px;letter-spacing:1.4px;margin-bottom:8px}
+.film-style-heading h3{font-family:var(--serif);font-size:23px;font-weight:400;letter-spacing:-.5px;margin:0 0 8px;color:#424b3b}
+.film-style-heading p{font-size:11px;line-height:1.7;color:#7c8e6b;margin:0}
+.film-style-grid{display:grid;grid-template-columns:minmax(210px,1.1fr) 1fr 1fr;gap:24px;align-items:center}
+.film-style-grid .toggle-row{margin-top:0;gap:9px;align-items:start}
+.film-style-grid .toggle-track{margin-top:1px}
+.film-style-grid .toggle-row small{line-height:1.7;max-width:215px}
+.film-style-grid .field select{font-size:11px}
+.film-style-save{border-top:1px solid #e9eadf;display:flex;justify-content:space-between;align-items:center;gap:15px;padding-top:17px;margin-top:23px}
+.film-style-save>span{display:flex;gap:7px;align-items:center;font-size:10px;line-height:1.6;color:#849272}
+.scene-camera{border:1px solid #e4e7dc;border-radius:5px;padding:13px 13px 10px;margin:0;min-width:0;background:#fafbf5}
+.scene-camera legend{display:flex;align-items:center;gap:6px;color:#7b8a6c;font-size:10px;padding:0 5px}
+.camera-fields{display:grid;grid-template-columns:1fr 1fr 1.35fr;gap:13px;align-items:center}
+.scene-camera .field{font-size:9px;gap:7px}
+.scene-camera input[type=number]{height:34px;padding:0 23px 0 10px;font-size:11px}
+.focus-input{position:relative}
+.focus-input>span{position:absolute;right:9px;top:11px;font-size:9px;color:#98a28e;pointer-events:none}
+.camera-zoom{display:grid;grid-template-columns:1fr auto;align-items:center}
+.camera-zoom>span{font-size:10px!important;color:#7c8e6b;font-variant-numeric:tabular-nums}
+.scene-camera input[type=range]{grid-column:1/-1;width:100%;height:34px;padding:0;accent-color:var(--orange);border:0;background:transparent;box-shadow:none}
+.scene-camera p{font-size:9px;font-weight:400;color:#8c9980;line-height:1.6;margin:9px 0 0}
+.scene-camera:disabled{opacity:.65}
+.scene-focus-point{position:absolute;width:24px;height:24px;display:grid;place-items:center;z-index:1;border:1px solid #fff4e9;border-radius:50%;transform:translate(-50%,-50%);background:#e85b32dd;box-shadow:0 0 0 6px #e85b3235,0 2px 10px #20242140;pointer-events:none;color:#fffefa}
+.scene-focus-point svg{margin:8px 0 0 8px;filter:drop-shadow(0 1px 2px #20242170)}
+.scene-focus-point i{position:absolute;inset:7px;border:1px solid #fff4e9;border-radius:50%}
+.scene-visual-label{position:absolute;bottom:12px;left:12px;right:12px;font-size:7px;letter-spacing:1.1px;text-align:center;line-height:1.6;padding:7px 5px;color:#fff6e9;background:#202421c9;border:1px solid #fffefa1c;border-radius:3px}
+.promo-preview-graphic .promo-floating-shape{position:absolute;right:19%;top:25%;height:31px;width:31px;background:linear-gradient(135deg,#fbb58a,#ce4b29);border:1px solid #ffd3ac90;transform:rotate(-25deg) skewY(10deg);box-shadow:7px 10px 0 #762e2033}
+.promo-preview-graphic>small{position:absolute;bottom:24%;left:9%;right:9%;font-size:7px;letter-spacing:1.2px;color:#f5d1b4;text-align:center}
+@media(max-width:1170px){.film-style-panel{padding:22px}.film-style-grid{grid-template-columns:1fr 1fr;gap:22px}.film-style-grid>.field{grid-column:1/-1}.film-style-grid .toggle-row small{max-width:none}.camera-fields{gap:9px}.scene-camera{padding:11px 10px 9px}.scene-camera legend{font-size:9px}}
+@media(max-width:575px){.film-style-panel{padding:21px 18px}.film-style-heading{gap:10px;margin-bottom:22px}.film-style-heading>.icon-tile{width:30px;height:30px}.film-style-heading .eyebrow{font-size:6px}.film-style-heading h3{font-size:22px;line-height:1.2;max-width:230px}.film-style-heading p{font-size:10px}.film-style-grid{grid-template-columns:1fr;gap:22px}.film-style-grid .field select{font-size:12px}.film-style-grid .toggle-row strong{font-size:12px}.film-style-grid .toggle-row small{font-size:10px}.film-style-save{align-items:stretch;flex-direction:column;gap:12px}.film-style-save .button{width:100%}.film-style-save>span{font-size:10px}.camera-fields{gap:12px}.scene-camera{padding:12px}.scene-camera legend{font-size:10px}.scene-camera .field{font-size:10px}.scene-camera input[type=number]{font-size:12px}.scene-camera p{font-size:9px}.scene-visual-label{font-size:7px}.promo-preview-graphic>small{bottom:22%;font-size:7px}}
+
+.scene-footage-frame{position:relative;width:100%;aspect-ratio:16/9;flex-shrink:0;border-top:1px solid #e0e7d2;border-bottom:1px solid #e0e7d2}.scene-footage-frame>img{display:block;width:100%;height:100%;aspect-ratio:16/9;object-fit:contain}.scene-visual>.scene-length{top:13px;bottom:auto}
+
+.scene-privacy{border:1px solid #e4e7dc;border-radius:5px;background:#fffefa;overflow:hidden}.scene-privacy>summary{display:flex;align-items:center;gap:7px;list-style:none;cursor:pointer;padding:12px 13px;color:#758569;font-size:10px}.scene-privacy>summary::-webkit-details-marker{display:none}.scene-privacy>summary>small{margin-left:auto;font-size:9px;color:#909d83}.scene-privacy>summary>svg:last-child{transition:transform .2s}.scene-privacy[open]>summary{border-bottom:1px solid #edf0e5}.scene-privacy[open]>summary>svg:last-child{transform:rotate(180deg)}.scene-privacy>summary:focus-visible{outline:3px solid #e85b3280;outline-offset:-3px}.privacy-mask-controls{padding:0 13px 13px}.privacy-mask-controls>p{font-size:10px;line-height:1.7;font-weight:400;color:#839276;margin:12px 0}.privacy-mask-controls>.button{margin-top:9px;font-size:9px;min-height:31px}.privacy-mask-editor{border:1px solid #e8ebdf;border-radius:4px;background:#fafbf6;min-width:0;margin:11px 0 0;padding:10px}.privacy-mask-editor>legend{font-size:9px;color:#7d8d70;padding:0 5px}.privacy-mask-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.privacy-mask-fields .field{font-size:9px}.privacy-mask-fields input{height:32px;padding-right:22px!important;font-size:11px!important}.privacy-mask-fields .focus-input>span{top:10px}.privacy-mask-fields input[aria-invalid=true]{border-color:#d3856b;background:#fff6ef}.remove-mask-button{border:0;background:none;display:flex;align-items:center;gap:4px;font-size:9px;color:#a87b68;margin:10px 0 0;padding:2px 0}.remove-mask-button:hover{color:#c45e3c}.privacy-mask-controls>.mask-error{font-size:10px;color:#ae5e46;margin-bottom:4px}.scene-privacy-mask{position:absolute;background:#29302b;outline:1px dashed #e89a76;z-index:2;overflow:hidden;pointer-events:none;display:grid;place-items:center}.scene-privacy-mask>span{font-size:8px;color:#f5d6bf;background:#ffffff10;border:1px solid #ffffff25;min-width:13px;text-align:center;padding:2px;border-radius:2px}.scene-footage-frame{overflow:hidden}.privacy-mask-editor:disabled{opacity:.65}
+@media(max-width:575px){.scene-privacy>summary{font-size:11px;padding:12px}.scene-privacy>summary>small{font-size:9px}.privacy-mask-controls{padding:0 12px 12px}.privacy-mask-fields{gap:8px}.privacy-mask-fields .field{font-size:9px}.privacy-mask-fields input{padding-left:7px;font-size:10px!important}.privacy-mask-controls>p{font-size:10px}.privacy-mask-controls>.button{font-size:10px;width:100%}.remove-mask-button{font-size:10px}}

@@ -1,11 +1,14 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
 import { chromium, type Browser, type Page } from 'playwright';
-import type { OutputKind, Project, Scene, VideoOutput } from '../shared/types.js';
-import { demoAperture, filmTemplate, type FilmState } from './film-template.js';
+import { DEFAULT_RENDER_SETTINGS, type OutputKind, type Project, type Scene, type VideoOutput } from '../shared/types.js';
+import type { FilmState } from './film-state.js';
+import { promoTemplate } from './promo-template.js';
+import { renderDynamicDemo } from './demo-renderer.js';
+import { subtitleAt, subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
 
 const FPS = 30;
 const MAX_SECONDS = 90;
@@ -38,18 +41,6 @@ async function containedFile(directory: string, relative: string): Promise<strin
   if (!resolved.startsWith(`${root}${path.sep}`)) throw new Error('A render asset is outside the project directory.');
   if (!(await stat(resolved)).isFile()) throw new Error('A render asset is not a file.');
   return resolved;
-}
-
-async function imageData(directory: string, relative?: string): Promise<string | undefined> {
-  if (!relative) return undefined;
-  const file = await containedFile(directory, relative);
-  const info = await stat(file);
-  if (info.size > 20 * 1024 * 1024) throw new Error('A screenshot exceeds the 20 MB render limit.');
-  const bytes = await readFile(file);
-  const extension = path.extname(file).toLowerCase();
-  const mime = extension === '.png' ? 'image/png' : ['.jpg', '.jpeg'].includes(extension) ? 'image/jpeg' : extension === '.webp' ? 'image/webp' : undefined;
-  if (!mime) throw new Error('Screenshots must be PNG, JPEG, or WebP images.');
-  return `data:${mime};base64,${bytes.toString('base64')}`;
 }
 
 function timeline(scenes: Scene[]): TimedScene[] {
@@ -119,84 +110,30 @@ function encodingOptions(): string[] {
   return ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-movflags', '+faststart'];
 }
 
-/** A quiet original synthesized sound bed; no copyrighted or network-fetched audio. */
+/** Original 120 BPM ambient pulse, synthesized offline without fetched audio. */
 function soundtrack(duration: number): string {
-  return `aevalsrc=0.025*(sin(2*PI*130.8128*t)+0.5*sin(2*PI*196*t)+0.35*sin(2*PI*261.6256*t))*(0.75+0.25*sin(2*PI*0.125*t)):s=48000:d=${duration}`;
-}
-
-function subtitleTime(seconds: number): string {
-  const ms = Math.round(seconds * 1000);
-  return `${String(Math.floor(ms / 3_600_000)).padStart(2, '0')}:${String(Math.floor(ms / 60_000) % 60).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')},${String(ms % 1000).padStart(3, '0')}`;
+  const pad='0.022*(sin(2*PI*130.8128*t)+0.5*sin(2*PI*196*t)+0.35*sin(2*PI*261.6256*t))*(0.7+0.3*sin(2*PI*0.125*t))';
+  const kick='0.075*sin(2*PI*(52*t+3*(1-exp(-28*mod(t,0.5)))))*exp(-22*mod(t,0.5))';
+  const bass='0.028*sin(2*PI*65.4064*t)*exp(-5*mod(t,0.5))';
+  const hats='0.007*sin(2*PI*6301*t)*sin(2*PI*8111*t)*exp(-100*mod(t,0.25))';
+  return `aevalsrc='${pad}+${kick}+${bass}+${hats}':s=48000:d=${duration}`;
 }
 
 async function writeNarration(directory: string, scenes: TimedScene[]): Promise<void> {
-  let elapsed = 0;
-  const subtitles = scenes.map((scene, index) => {
-    const start = elapsed;
-    elapsed += scene.duration;
-    return `${index + 1}\n${subtitleTime(start)} --> ${subtitleTime(elapsed)}\n${safeText(scene.narration || scene.caption, 1200).replace(/\r/g, '')}\n`;
-  }).join('\n');
-  await writeFile(path.join(directory, 'narration.srt'), subtitles, 'utf8');
-  await writeFile(path.join(directory, 'narration.txt'), scenes.map(scene => `${safeText(scene.title, 160)}\n${safeText(scene.narration || scene.caption, 1500)}`).join('\n\n'), 'utf8');
-}
-
-async function renderDemo(
-  project: Project, directory: string, temporary: string, scenes: TimedScene[], states: FilmState[], page: Page,
-  width: number, height: number, update: (progress: number, message: string) => void, signal?: AbortSignal,
-): Promise<string> {
-  if (!project.recording) throw new Error('A live browser recording is required for the demo video.');
-  const recording = await containedFile(directory, project.recording);
-  for (const scene of scenes) {
-    if (!Number.isFinite(scene.recordingStart) || !Number.isFinite(scene.recordingEnd) || scene.recordingStart! < 0 || scene.recordingEnd! <= scene.recordingStart!) {
-      throw new Error(`The scene “${safeText(scene.title, 80)}” needs a safe recorded clip before the demo can render.`);
-    }
-  }
-  await page.setContent(filmTemplate('demo', width, height, project.brief.brandColor));
-  const aperture = demoAperture(width, height);
-  const segments: string[] = [];
-  for (let index = 0; index < scenes.length; index += 1) {
-    aborted(signal);
-    const scene = scenes[index];
-    update(index / scenes.length * 0.9, `Editing live demo scene ${index + 1} of ${scenes.length}`);
-    await setFrame(page, { ...states[index], screenshot: undefined, progress: 0.5 });
-    // The empty aperture is completely covered by the live clip below.
-    const frame = path.join(temporary, `demo-art-${index}.png`);
-    await page.screenshot({ path: frame, type: 'png', animations: 'disabled' });
-    const segment = path.join(temporary, `demo-scene-${index}.mp4`);
-    const recordedDuration = scene.recordingEnd! - scene.recordingStart!;
-    const speed = scene.duration / recordedDuration;
-    const filter = [
-      `[1:v]setpts=(PTS-STARTPTS)*${speed.toFixed(8)},fps=${FPS},scale=${aperture.width}:${aperture.height}:force_original_aspect_ratio=decrease,pad=${aperture.width}:${aperture.height}:(ow-iw)/2:(oh-ih)/2:color=0x0b0e19,setsar=1,tpad=stop_mode=clone:stop_duration=${scene.duration}[live]`,
-      `[0:v][live]overlay=${aperture.x}:${aperture.y}:shortest=1,trim=duration=${scene.duration},fade=t=in:d=0.18,fade=t=out:st=${Math.max(0, scene.duration - 0.18).toFixed(4)}:d=0.18[out]`,
-    ].join(';');
-    await runEncoder([
-      '-loop', '1', '-framerate', String(FPS), '-i', frame,
-      '-ss', String(scene.recordingStart), '-t', String(recordedDuration), '-i', recording,
-      '-filter_complex', filter, '-map', '[out]', '-an', '-t', String(scene.duration), ...encodingOptions(), segment,
-    ], signal);
-    segments.push(segment);
-  }
-  aborted(signal);
-  update(0.94, 'Finishing demo soundtrack and MP4');
-  const list = path.join(temporary, 'demo-segments.txt');
-  // These names are generated internally, so user paths never enter concat syntax.
-  await writeFile(list, segments.map((_, index) => `file 'demo-scene-${index}.mp4'`).join('\n'), 'utf8');
-  const duration = scenes.reduce((sum, scene) => sum + scene.duration, 0);
-  const output = path.join(temporary, 'demo.mp4');
-  await runEncoder([
-    '-f', 'concat', '-safe', '1', '-i', list, '-f', 'lavfi', '-i', soundtrack(duration),
-    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-    '-af', `afade=t=in:d=1,afade=t=out:st=${Math.max(0, duration - 1.5)}:d=1.5`,
-    '-t', String(duration), '-movflags', '+faststart', output,
-  ], signal);
-  return output;
+  const cues = subtitleCues(scenes);
+  await Promise.all([
+    writeFile(path.join(directory, 'narration.srt'), subtitleSrt(cues), 'utf8'),
+    writeFile(path.join(directory, 'captions.srt'), subtitleSrt(cues), 'utf8'),
+    writeFile(path.join(directory, 'captions.vtt'), subtitleVtt(cues), 'utf8'),
+    writeFile(path.join(directory, 'narration.txt'), scenes.map(scene => `${safeText(scene.title, 160)}\n${safeText(scene.narration || scene.caption, 1500)}`).join('\n\n'), 'utf8'),
+  ]);
 }
 
 async function renderPromo(
-  project: Project, temporary: string, scenes: TimedScene[], states: FilmState[], page: Page,
+  project: Project, temporary: string, scenes: TimedScene[], stateAt: (index: number, progress: number, totalFrame: number) => FilmState, page: Page,
   width: number, height: number, update: (progress: number, message: string) => void, signal?: AbortSignal,
 ): Promise<string> {
-  await page.setContent(filmTemplate('promo', width, height, project.brief.brandColor));
+  await page.setContent(promoTemplate(width, height, project.brief.brandColor));
   const output = path.join(temporary, 'promo.mp4');
   const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
   const duration = totalFrames / FPS;
@@ -214,10 +151,7 @@ async function renderPromo(
       for (let frame = 0; frame < scene.frames; frame += 1) {
         aborted(signal);
         if (job.process.exitCode !== null || job.process.signalCode !== null) { await job.done; throw new Error('Video encoder stopped.'); }
-        await setFrame(page, {
-          ...states[index], progress: (frame + 0.5) / scene.frames,
-          totalProgress: rendered / Math.max(1, totalFrames - 1), time: rendered / FPS,
-        });
+        await setFrame(page, stateAt(index, (frame + 0.5) / scene.frames, rendered));
         const pixels = await page.screenshot({ type: 'jpeg', quality: 94, animations: 'disabled' });
         const input = job.process.stdin;
         if (!input || input.destroyed) { await job.done; throw new Error('Video encoder input closed.'); }
@@ -260,31 +194,27 @@ export async function renderVideos(project: Project, directory: string, kinds: O
   let abortBrowser: (() => void) | undefined;
   try {
     options.onProgress?.(0, 'Preparing local video assets');
-    const cache = new Map<string, string | undefined>();
-    const screenshots: (string | undefined)[] = [];
-    for (const scene of scenes) {
-      const screenshot = scene.screenshot || project.shots.find(shot => shot.screenshot)?.screenshot;
-      if (screenshot && !cache.has(screenshot)) cache.set(screenshot, await imageData(directory, screenshot));
-      screenshots.push(screenshot ? cache.get(screenshot) : undefined);
-    }
-    let elapsed = 0;
-    const states: FilmState[] = scenes.map((scene, index) => {
-      const state: FilmState = {
-        name: safeText(project.brief.name, 80), title: safeText(scene.title, 90), caption: safeText(scene.caption, 260),
-        feature: safeText(scene.feature || `Chapter ${String(index + 1).padStart(2, '0')}`, 70), url: humanUrl(project.brief.url),
-        screenshot: screenshots[index], nextScreenshot: screenshots[(index + 1) % scenes.length], scene: index, scenes: scenes.length,
-        progress: 0, totalProgress: elapsed / duration, time: elapsed,
+    const settings = { ...DEFAULT_RENDER_SETTINGS, ...project.renderSettings };
+    const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
+    const cues = subtitleCues(scenes);
+    const stateAt = (index: number, progress: number, totalFrame: number): FilmState => {
+      const scene = scenes[index];
+      const time = (totalFrame + 0.5) / FPS;
+      return {
+        name: safeText(project.brief.name, 80), title: safeText(scene.title, 160), caption: safeText(scene.caption, 360),
+        feature: safeText(scene.feature || `Chapter ${String(index + 1).padStart(2, '0')}`, 100), url: humanUrl(project.brief.url),
+        scene: index, scenes: scenes.length, progress, totalProgress: (totalFrame + 0.5) / totalFrames, time,
+        motion: settings.motion, focus: scene.focus,
+        ...(settings.subtitles ? subtitleAt(cues, time) : { subtitle: '', subtitleWord: -1 }),
       };
-      elapsed += scene.duration;
-      return state;
-    });
+    };
     browser = await chromium.launch({ headless: true });
     abortBrowser = () => { void browser?.close().catch(() => {}); };
     options.signal?.addEventListener('abort', abortBrowser, { once: true });
     aborted(options.signal);
     const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
     const page = await context.newPage();
-    // Rendering is offline: the template may only read inlined screenshot data.
+    // Rendering is offline; neither film can fetch network assets.
     await page.route('**/*', route => route.abort());
     const outputs: VideoOutput[] = [];
     const finished: { temporary: string; output: string }[] = [];
@@ -292,8 +222,10 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       const kind = selected[index];
       const update = (progress: number, message: string) => options.onProgress?.(Math.min(99, Math.round((index + progress) / selected.length * 99)), message);
       const file = kind === 'demo'
-        ? await renderDemo(project, directory, temporary, scenes, states, page, width, height, update, options.signal)
-        : await renderPromo(project, temporary, scenes, states, page, width, height, update, options.signal);
+        ? await renderDynamicDemo({ project, directory, temporary, scenes, page, width, height, fps: FPS,
+          recording: await containedFile(directory, project.recording || ''), update, signal: options.signal, stateAt,
+          encoder, runEncoder, encodingOptions, soundtrack })
+        : await renderPromo(project, temporary, scenes, stateAt, page, width, height, update, options.signal);
       aborted(options.signal);
       const relative = `${kind}.mp4`;
       const poster = `${kind}-poster.jpg`;
@@ -309,7 +241,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     }
     // Publish only after every requested encode succeeds, preserving previous outputs on failure.
     await writeNarration(temporary, scenes);
-    finished.push(...['narration.srt', 'narration.txt'].map(file => ({ temporary: path.join(temporary, file), output: path.join(directory, file) })));
+    finished.push(...['narration.srt', 'narration.txt', 'captions.srt', 'captions.vtt'].map(file => ({ temporary: path.join(temporary, file), output: path.join(directory, file) })));
     for (const item of finished) await rename(item.temporary, item.output);
     options.onProgress?.(100, 'Videos ready');
     return outputs;

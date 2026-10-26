@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
-import type { Brief, Project } from '../shared/types.js';
+import { DEFAULT_RENDER_SETTINGS, type Brief, type Project } from '../shared/types.js';
 
 export const briefSchema = z.object({
   name: z.string().trim().min(1).max(100), url: z.string().url().max(2000).refine(v=>{const u=new URL(v);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password;},'Use an HTTP or HTTPS URL without embedded credentials'),
@@ -16,12 +16,18 @@ export const briefSchema = z.object({
   allowWrites: z.boolean().default(false), sample: z.boolean().default(false)
 }).strict();
 
+export const renderSettingsSchema = z.object({
+  motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean()
+}).strict();
+
 export const sceneSchema = z.object({
   id:z.string().min(1).max(100),title:z.string().min(1).max(160),caption:z.string().max(360),
   narration:z.string().max(2000),duration:z.number().min(1).max(30),
   screenshot:z.string().regex(/^[a-zA-Z0-9._-]+\.(png|jpg)$/).optional(),
   recordingStart:z.number().nonnegative().optional(),recordingEnd:z.number().nonnegative().optional(),
-  feature:z.string().max(200).optional()
+  feature:z.string().max(200).optional(),
+  focus:z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),zoom:z.number().min(1).max(2.4)}).strict().optional(),
+  redactions:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),width:z.number().min(.001).max(1),height:z.number().min(.001).max(1)}).strict().refine(value=>value.x+value.width<=1+1e-8&&value.y+value.height<=1+1e-8,'Privacy masks must fit inside the recording.')).max(8).optional()
 }).strict();
 
 export class Store {
@@ -43,7 +49,7 @@ export class Store {
   dir(id:string) { if(!/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid project ID');return path.join(this.root,id); }
   get(id:string) { const p=this.projects.get(id);if(!p) throw Object.assign(new Error('Project not found'),{status:404});return p; }
   async create(brief:Brief) {
-    const now=new Date().toISOString();const p:Project={id:randomUUID(),brief,createdAt:now,updatedAt:now,stage:'draft',progress:0,message:'Your product film starts here.',logs:[],sources:[],findings:[],shots:[],scenes:[],outputs:[]};
+    const now=new Date().toISOString();const p:Project={id:randomUUID(),brief,createdAt:now,updatedAt:now,stage:'draft',progress:0,message:'Your product film starts here.',logs:[],sources:[],findings:[],shots:[],scenes:[],outputs:[],renderSettings:{...DEFAULT_RENDER_SETTINGS}};
     await mkdir(this.dir(p.id),{recursive:true,mode:0o700});this.projects.set(p.id,p);await this.save(p);return p;
   }
   async save(p:Project) {

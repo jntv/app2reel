@@ -38,8 +38,8 @@ The app binds only to `127.0.0.1`. Keep it local; it is designed for the person 
 1. Enter the product name, URL, description, purpose, actors/roles, and features. Choose a brand color, film length, and 720p or 1080p output.
 2. If the product needs an account, open **Behind a login?** and enter its username/password for automatic sign-in. For a reCAPTCHA, optionally authorize **Let Capture attempt a visible CAPTCHA** for that run. Capture can try the checkbox and a bounded sequence of visible challenge clicks through Codex; success is not guaranteed. Passwords stay out of model requests. For SSO, MFA, or a challenge the app cannot complete, use the separate unrecorded sign-in browser. Capture detects a successful sign-in and saves it automatically; **I've finished signing in** is an optional check. Add any required product/login origins to the brief first.
 3. Start exploration. Capture researches public documentation and tutorials, visits the allowed product origins, records real interactions, and tracks which requested features were observed. Exploration has a configurable step budget; it does not guarantee exhaustive coverage of every product or role.
-4. Review screenshots, research sources, feature evidence, and the storyboard. Edit scene titles, captions, narration scripts, and duration.
-5. Render both films. Preview and download the MP4s, storyboard JSON, research JSON, captions, and narration script.
+4. Review screenshots, research sources, feature evidence, and the storyboard. Edit scene titles, chapter captions, timed subtitle text, duration, and each scene’s camera focus/zoom. Add privacy masks over names, contact details or other source regions you want hidden in the demo.
+5. In **Your films**, save your movement, subtitle, and cursor preferences, then render both films. Preview and download the MP4s, storyboard JSON, research JSON, SRT/WebVTT subtitles, and narration script.
 
 Use **Try a sample project** first. The included fictional Orbit app has four real interactive views. Sample mode uses deterministic browser actions and a fixed storyboard, with no AI calls or external web research; it exercises real recording and rendering.
 
@@ -47,12 +47,16 @@ Use **Try a sample project** first. The included fictional Orbit app has four re
 
 | Output | What it contains |
 | --- | --- |
-| `demo.mp4` | Actual browser footage trimmed to selected moments, retimed to scene lengths, with a cinematic browser frame, titles, captions, fades, and soundtrack. |
-| `promo.mp4` | Frame-rendered motion design: perspective product cards textured with captured screenshots, kinetic typography, animated spheres/rings, and soundtrack. |
+| `demo.mp4` | Actual browser footage with eased camera pushes/pans, cursor following and highlights, animated chapter graphics, lower-third captions, word-highlighted subtitles, and soundtrack. |
+| `promo.mp4` | Screenshot-free motion design with kinetic typography, procedural 3D forms, animated feature diagrams, particles, moving compositions, subtitles, and a branded ending. |
 
-Both use H.264 at 30 fps with AAC audio. The original ambient sound bed is synthesized locally. Narration is exported as TXT/SRT; **spoken voiceover is not generated**. Perspective scenes and geometric shapes are template-driven graphics. This first release does not produce arbitrary photorealistic CGI or generative video. Bespoke studio creative direction, asset production, and editorial polish remain iterative work.
+Both use H.264 at 30 fps with AAC audio and an original locally synthesized music bed. The promo never reads product screenshots or recordings. Its graphics and type are animated from the product’s reviewed story. The demo composites real video with frame-driven motion artwork; it does not substitute still screenshots for footage. New explorations capture pointer coordinates and actual clicks. For older Capture recordings, local image analysis can recover the visible orange cursor’s movements; it never invents click events. Camera focus remains editable when a recording has no recognizable cursor.
 
-Rendering takes time: on the development laptop, a three-second pair took about 13 seconds at 1080p; a longer film can take several minutes. Captured browser footage is recorded by Playwright and recompressed; a 1080p export cannot restore detail absent from a product's assets or the source recording.
+Privacy masks are opaque rectangles applied to original video pixels before camera zoom/pan, so covered details remain hidden as the camera moves. The storyboard previews their position and validates their bounds. Masks affect the exported demo; original recordings and screenshots remain local and unchanged. Focus/mask-only changes preserve a completed graphics promo, since it uses no screen assets.
+
+Chapter captions always appear. Optional burned-in subtitles use the scene’s narration text, with the same timed phrases exported as SRT and WebVTT. Narration is also exported as TXT; **spoken voiceover is not generated**. Procedural graphics are reusable designs rather than arbitrary photorealistic CGI. Review the storyboard, focus points and final cuts for your product’s creative direction.
+
+Rendering both films frame by frame can take several minutes. Captured browser footage is recorded by Playwright and recompressed; a 1080p export cannot restore detail absent from the source recording. Use Cinematic for stronger movement or Subtle for gentler camera and graphic motion. Save style changes before rendering; changing style or focus preserves the captured footage.
 
 ## Product access and privacy
 
@@ -93,9 +97,9 @@ npm test
 npm run build
 ```
 
-Tests cover Codex configuration isolation, subscription-only authentication, structured completion, cancellation, URL validation/origin boundaries, dangerous actions, and job reservation. Development verification also includes a real Codex subscription request, actual browser recordings, 720p/1080p MP4 encodes, cancellation, full video decoding, and desktop/mobile interface checks. A sample is included so you can verify the complete workflow before using a real product.
+Tests cover Codex isolation and subscription authentication, browser boundaries, real pointer capture, camera projection and zoom bounds, cursor detection without fabricated clicks, screenshot-free promo rendering, deterministic motion, subtitle timing, cancellation, and safe media publication. Development verification also includes actual recordings, MP4 encodes, full video decoding and visual checks at 720p/1080p. A sample is included so you can verify the complete workflow before using a real product.
 
-Code layout: `src/` is the React studio; `server/ai.ts` is the local Codex bridge; `server/browser.ts` implements browser actions and recording; `server/pipeline.ts` orchestrates research and storyboarding; `server/render.ts` and `server/film-template.ts` encode and design the films. Durable requirements and API contracts are in `project-context/`.
+Code layout: `src/` is the React studio; `server/ai.ts` is the local Codex bridge; `server/browser.ts` records exploration and pointer telemetry; `server/pipeline.ts` orchestrates research and storyboarding. `server/render.ts` coordinates exports, `demo-renderer.ts`/`demo-template.ts` compose the live demo, `promo-template.ts` draws the graphics promo, and `subtitles.ts` supplies the shared cue timeline. Durable requirements and API contracts are in `project-context/`.
 
 ## Subscription access
 

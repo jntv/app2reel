@@ -5,6 +5,7 @@ import { Store } from './store.js';
 import { LocalAI } from './ai.js';
 import { cleanURL, exploreBrowser, type Credentials } from './browser.js';
 import { renderVideos } from './render.js';
+import { subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
 
 const researchSchema={type:'object',properties:{sources:{type:'array',items:{type:'object',properties:{title:{type:'string'},url:{type:'string'},summary:{type:'string'}},required:['title','url','summary'],additionalProperties:false}}},required:['sources'],additionalProperties:false};
 const planSchema={type:'object',properties:{scenes:{type:'array',items:{type:'object',properties:{title:{type:'string'},caption:{type:'string'},narration:{type:'string'},shotIndex:{type:'integer'},feature:{type:'string'}},required:['title','caption','narration','shotIndex','feature'],additionalProperties:false}}},required:['scenes'],additionalProperties:false};
@@ -24,7 +25,7 @@ export class Pipeline {
   }
   async explore(p:Project,credentials?:Credentials){
     await this.start(p,async(signal)=>{
-      p.stage='researching';p.progress=3;p.error=undefined;p.shots=[];p.findings=p.brief.features.map(feature=>({feature,status:'not-observed',evidence:'Not yet verified in the product.'}));p.scenes=[];p.outputs=[];p.recording=undefined;
+      p.stage='researching';p.progress=3;p.error=undefined;p.shots=[];p.findings=p.brief.features.map(feature=>({feature,status:'not-observed',evidence:'Not yet verified in the product.'}));p.scenes=[];p.outputs=[];p.recording=undefined;p.cursorTrack=[];
       await this.store.log(p,p.brief.sample?'Exploring the included sample. No AI requests will be made.':'Researching product documentation and tutorials.');
       if(p.brief.sample){p.sources=[{title:'Orbit sample workspace',url:p.brief.url,summary:'Built-in fictional product. Deterministic sample exploration; no external research or AI inference.'}];}
       else {
@@ -41,7 +42,7 @@ export class Pipeline {
         p.progress=Math.min(75,15+(p.shots.length/(p.brief.sample?4:p.brief.maxSteps))*60);await this.store.save(p);
       },message=>this.store.log(p,message),credentials);
       if(signal.aborted)throw new Error('Run cancelled');
-      p.recording=result.recording;if(!p.shots.length||!p.recording)throw new Error('Exploration did not produce usable product footage.');
+      p.recording=result.recording;p.cursorTrack=result.cursorTrack;if(!p.shots.length||!p.recording)throw new Error('Exploration did not produce usable product footage.');
       p.progress=80;await this.store.log(p,'Turning observed product moments into a film storyboard.');
       let planned:{title:string;caption:string;narration:string;shotIndex:number;feature:string}[];
       if(p.brief.sample)planned=p.shots.map((s,i)=>({title:['A little clarity. A lot of progress.','Big ideas. Clear next steps.','Your momentum, made visible.','Better work starts together.'][i],caption:['Meet Orbit. One home for your team’s best work.','See every project, priority, and next step.','Turn your team’s progress into clear insights.','Bring your people and projects into flow.'][i],narration:['Meet Orbit, a shared workspace that helps teams move with clarity.','Keep projects organized and see what matters, all in one place.','Explore delivery trends and understand your team’s momentum.','Bring everyone together around their best work.'][i],shotIndex:i,feature:p.brief.features[i]}));
@@ -75,12 +76,15 @@ export class Pipeline {
   }
   async exportPlan(p:Project){
     const directory=this.store.dir(p.id);
+    const cues=subtitleCues(p.scenes);
     await Promise.all([
-      writeFile(path.join(directory,'storyboard.json'),JSON.stringify({product:p.brief.name,scenes:p.scenes,findings:p.findings},null,2)),
+      writeFile(path.join(directory,'storyboard.json'),JSON.stringify({product:p.brief.name,scenes:p.scenes,findings:p.findings,renderSettings:p.renderSettings},null,2)),
       writeFile(path.join(directory,'research.json'),JSON.stringify({sources:p.sources,findings:p.findings},null,2)),
       writeFile(path.join(directory,'narration.txt'),p.scenes.map((s,i)=>`${i+1}. ${s.title}\n${s.narration}`).join('\n\n')),
-      writeFile(path.join(directory,'captions.srt'),srt(p.scenes))
+      writeFile(path.join(directory,'captions.srt'),subtitleSrt(cues)),
+      writeFile(path.join(directory,'narration.srt'),subtitleSrt(cues)),
+      writeFile(path.join(directory,'captions.vtt'),subtitleVtt(cues))
     ]);
   }
 }
-export function srt(scenes:Scene[]){let at=0;const format=(n:number)=>{const ms=Math.round(n*1000);return `${String(Math.floor(ms/3600000)).padStart(2,'0')}:${String(Math.floor(ms/60000)%60).padStart(2,'0')}:${String(Math.floor(ms/1000)%60).padStart(2,'0')},${String(ms%1000).padStart(3,'0')}`;};return scenes.map((s,i)=>{const start=at;at+=s.duration;return `${i+1}\n${format(start)} --> ${format(at)}\n${s.caption}\n`;}).join('\n');}
+export function srt(scenes:Scene[]){return subtitleSrt(subtitleCues(scenes));}

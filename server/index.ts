@@ -4,7 +4,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { Store, briefSchema, sceneSchema } from './store.js';
+import { Store, briefSchema, sceneSchema, renderSettingsSchema } from './store.js';
 import { LocalAI } from './ai.js';
 import { Pipeline } from './pipeline.js';
 import { browserAvailable, clearSessions, completeLogin, discardSession, loginStatus, openLogin } from './browser.js';
@@ -45,18 +45,25 @@ app.post('/api/sample',asyncRoute(async(_req,res)=>res.status(201).json(await st
 app.get('/api/projects/:id',asyncRoute(async(req,res)=>res.json(store.get(String(req.params.id)))));
 app.put('/api/projects/:id',asyncRoute(async(req,res)=>{
   pipeline.assertIdle();const p=store.get(String(req.params.id));
-  const patch=z.object({brief:briefSchema.partial().optional(),scenes:z.array(sceneSchema).min(1).max(12).optional()}).strict().parse(req.body);
+  const patch=z.object({brief:briefSchema.partial().optional(),scenes:z.array(sceneSchema).min(1).max(12).optional(),renderSettings:renderSettingsSchema.optional()}).strict().parse(req.body);
   if(patch.brief){
     if(patch.brief.sample!==undefined&&patch.brief.sample!==p.brief.sample)throw new Error('Sample mode cannot be changed.');
     if(p.brief.sample&&patch.brief.url&&patch.brief.url!==p.brief.url)throw new Error('Create a new project to explore another URL.');
     const previous=JSON.stringify(p.brief);p.brief=briefSchema.parse({...p.brief,...patch.brief});
-    if(previous!==JSON.stringify(p.brief)){await discardSession(p.id);p.stage='draft';p.error=undefined;p.scenes=[];p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.message='Brief updated. Explore again to record the updated product.';}
+    if(previous!==JSON.stringify(p.brief)){await discardSession(p.id);p.stage='draft';p.error=undefined;p.scenes=[];p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.cursorTrack=undefined;p.message='Brief updated. Explore again to record the updated product.';}
   }
   if(patch.scenes){
     if(patch.scenes.reduce((a,s)=>a+s.duration,0)>90)throw new Error('Total film duration must be 90 seconds or less.');
     const permitted=new Set(p.shots.map(s=>s.screenshot));
     for(const s of patch.scenes){if(s.screenshot&&!permitted.has(s.screenshot))throw new Error('Storyboard can only use captured screenshots.');if(s.recordingStart!==undefined&&s.recordingEnd!==undefined&&s.recordingEnd<=s.recordingStart)throw new Error('Clip end must be after its start.');}
-    p.scenes=patch.scenes;p.outputs=[];p.stage='review';await pipeline.exportPlan(p);
+    const promoStory=(scenes:typeof p.scenes)=>JSON.stringify(scenes.map(s=>[s.title,s.caption,s.narration,s.duration,s.feature||'']));
+    const samePromo=promoStory(p.scenes)===promoStory(patch.scenes);
+    p.scenes=patch.scenes;p.outputs=samePromo?p.outputs.filter(output=>output.kind==='promo'):[];p.stage='review';await pipeline.exportPlan(p);
+  }
+  if(patch.renderSettings){
+    p.renderSettings=patch.renderSettings;p.outputs=[];p.error=undefined;
+    if(p.scenes.length)p.stage='review';
+    p.message='Film style saved. Render the films to apply your changes.';
   }
   await store.save(p);res.json(p);
 }));
@@ -89,8 +96,8 @@ app.get('/api/projects/:id/events',(req,res,next)=>{
 app.get('/artifacts/:id/:filename',(req,res,next)=>{
   try{
     const id=String(req.params.id),filename=String(req.params.filename);const p=store.get(id);
-    if(!/^[a-zA-Z0-9._-]+\.(png|jpg|mp4|webm|json|txt|srt)$/.test(filename)||filename==='project.json')return res.status(404).end();
-    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt']:[])]);
+    if(!/^[a-zA-Z0-9._-]+\.(png|jpg|mp4|webm|json|txt|srt|vtt)$/.test(filename)||filename==='project.json')return res.status(404).end();
+    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt','captions.vtt']:[])]);
     if(!available.has(filename))return res.status(404).end();
     res.setHeader('Cache-Control','no-store');res.sendFile(path.join(store.dir(id),filename),{dotfiles:'allow'},error=>{if(error&&!res.headersSent&&!res.destroyed)next(error);});
   }catch(error){next(error);}

@@ -1,7 +1,7 @@
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import type { Project, Shot, Finding } from '../shared/types.js';
+import type { Project, Shot, Finding, CursorSample } from '../shared/types.js';
 import type { LocalAI } from './ai.js';
 import { automatedSignIn, type SignInCredentials } from './signin.js';
 import { LoginSessions, applySavedLogin } from './login-sessions.js';
@@ -50,6 +50,7 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
   const browser=await chromium.launch({headless:!credentials?.attemptCaptcha});
   let context:BrowserContext|undefined;
   let recording:string|undefined;
+  const cursorTrack:CursorSample[]=[];
   const rawDir=path.join(directory,'raw');await mkdir(rawDir,{recursive:true,mode:0o700});
   try {
     if(credentials)await loginSessions.discard(project.id);
@@ -60,6 +61,14 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
     context=await browser.newContext({viewport:size,deviceScaleFactor:1,storageState:saved?.storageState,acceptDownloads:false,recordVideo:{dir:rawDir,size},serviceWorkers:'block'});
     if(saved)await applySavedLogin(context,saved);
     await scope(context,project);
+    let recordingStarted=0;
+    await context.exposeBinding('__capturePointer',({page:sourcePage,frame},sample:unknown)=>{
+      if(frame!==sourcePage.mainFrame()||!allowedURL(sourcePage.url(),project)||!recordingStarted)return;
+      const point=sample as {x?:unknown;y?:unknown};
+      if(typeof point?.x!=='number'||typeof point.y!=='number'||!Number.isFinite(point.x)||!Number.isFinite(point.y)||point.x<0||point.x>1||point.y<0||point.y>1)return;
+      cursorTrack.push({at:(Date.now()-recordingStarted)/1000,x:point.x,y:point.y,kind:'click'});
+    });
+    recordingStarted=Date.now();
     const page=await context.newPage();const video=page.video();
     // Never keep recordings of sign-in. Stop and remove raw footage if a sign-in form is encountered.
     let containsLogin=false,finished=false;
@@ -70,10 +79,16 @@ export async function exploreBrowser(project:Project,directory:string,ai:LocalAI
     };
     await context.addInitScript(()=>{
       addEventListener('DOMContentLoaded',()=>{
-        const cursor=document.createElement('div');cursor.id='capture-cursor';cursor.style.cssText='position:fixed;width:22px;height:22px;border:2px solid #fb6b38;background:#fb6b3833;border-radius:50%;z-index:2147483647;pointer-events:none;left:50%;top:50%;transition:left .35s ease,top .35s ease,transform .15s';document.body.append(cursor);
+        const cursor=document.createElement('div');cursor.id='capture-cursor';cursor.style.cssText='position:fixed;width:22px;height:22px;margin:-11px 0 0 -11px;border:2px solid #fb6b38;background:#fb6b3833;border-radius:50%;z-index:2147483647;pointer-events:none;left:50%;top:50%;transition:left .35s ease,top .35s ease,transform .15s';document.body.append(cursor);
       });
+      addEventListener('pointerdown',event=>{
+        if(!event.isTrusted||event.button!==0)return;
+        const emit=(window as unknown as {__capturePointer?:(point:{x:number;y:number})=>Promise<void>}).__capturePointer;
+        if(emit)void emit({x:event.clientX/innerWidth,y:event.clientY/innerHeight}).catch(()=>{});
+      },true);
     });
-    const start=Date.now();
+    const start=recordingStarted;
+    cursorTrack.push({at:0,x:.5,y:.5,kind:'move'});
     const onAbort=()=>{void context?.close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
     try {
       await page.goto(project.brief.url,{waitUntil:'domcontentloaded',timeout:45000});await page.waitForTimeout(900);
@@ -111,10 +126,16 @@ Current observation: ${JSON.stringify({...obs,elements:obs.elements.map(e=>({...
             if(el.href&&!allowedURL(el.href,project))throw new Error('Link is outside allowed origins');
             if(['password','email','file','hidden','submit'].includes(el.type)&&next.action==='type')throw new Error('Sensitive input excluded');
             const locator=page.locator(`[data-capture-id="${el.id}"]`).first();const box=await locator.boundingBox();
-            if(box)await page.evaluate(({x,y})=>{const c=document.getElementById('capture-cursor');if(c){c.style.left=x+'px';c.style.top=y+'px';}}, {x:box.x+box.width/2,y:box.y+box.height/2});
+            if(box){
+              const point={x:box.x+box.width/2,y:box.y+box.height/2};
+              const previous=await page.locator('#capture-cursor').boundingBox();
+              if(previous)cursorTrack.push({at:(Date.now()-start)/1000,x:Math.max(0,Math.min(1,(previous.x+previous.width/2)/size.width)),y:Math.max(0,Math.min(1,(previous.y+previous.height/2)/size.height)),kind:'move'});
+              await page.evaluate(({x,y})=>{const c=document.getElementById('capture-cursor');if(c){c.style.left=x+'px';c.style.top=y+'px';}},point);
+            }
             await page.waitForTimeout(400);
+            if(box)cursorTrack.push({at:(Date.now()-start)/1000,x:Math.max(0,Math.min(1,(box.x+box.width/2)/size.width)),y:Math.max(0,Math.min(1,(box.y+box.height/2)/size.height)),kind:'move'});
             if(next.action==='click')await locator.click({timeout:7000});
-            else {if(!/search|filter|find/i.test(el.label+' '+el.type)&&!project.brief.allowWrites)throw new Error('Only search/filter inputs allowed in read-only mode');await locator.fill(next.text.slice(0,500),{timeout:5000});}
+            else {if(!/search|filter|find/i.test(el.label+' '+el.type)&&!project.brief.allowWrites)throw new Error('Only search/filter inputs allowed in read-only mode');await locator.fill(next.text.slice(0,500),{timeout:5000});if(box)cursorTrack.push({at:(Date.now()-start)/1000,x:Math.max(0,Math.min(1,(box.x+box.width/2)/size.width)),y:Math.max(0,Math.min(1,(box.y+box.height/2)/size.height)),kind:'type'});}
           } else if(next.action==='scroll')await page.mouse.wheel(0,next.text==='up'?-700:700);
           else if(next.action==='navigate'){if(!allowedURL(next.url,project))throw new Error('Navigation outside allowed origins');await page.goto(next.url,{waitUntil:'domcontentloaded',timeout:30000});}
           else if(next.action==='back')await page.goBack({waitUntil:'domcontentloaded',timeout:15000});
@@ -128,6 +149,6 @@ Current observation: ${JSON.stringify({...obs,elements:obs.elements.map(e=>({...
       if(video&&finished&&!containsLogin&&!signal.aborted){const original=await video.path();recording='capture.webm';await rename(original,path.join(directory,recording));}
       await rm(rawDir,{recursive:true,force:true});
     }
-    return {recording,duration:(Date.now()-start)/1000};
+    return {recording,duration:(Date.now()-start)/1000,cursorTrack:recording?cursorTrack.sort((a,b)=>a.at-b.at):[]};
   } finally {await context?.close().catch(()=>{});await browser.close();await rm(rawDir,{recursive:true,force:true});}
 }

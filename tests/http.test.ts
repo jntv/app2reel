@@ -14,9 +14,10 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   const store=new Store(data);await store.init();
   const p=await store.create(briefSchema.parse({name:'Fixture',url:'https://example.com',description:'An integration test product',purpose:'Verify media access',actors:'Test users',features:['View products']}));
   p.stage='complete';p.scenes=[{id:'scene-1',title:'A scene',caption:'A caption',narration:'Words',duration:3}];
-  p.outputs=[{kind:'demo',file:'demo.mp4',poster:'demo-poster.jpg',width:1280,height:720,fps:30,duration:3}];await store.save(p);
+  p.outputs=[{kind:'demo',file:'demo.mp4',poster:'demo-poster.jpg',width:1280,height:720,fps:30,duration:3},{kind:'promo',file:'promo.mp4',width:1280,height:720,fps:30,duration:3}];await store.save(p);
   await writeFile(path.join(store.dir(p.id),'demo.mp4'),Buffer.from('0123456789'));
   await writeFile(path.join(store.dir(p.id),'demo-poster.jpg'),Buffer.from('fixture-poster'));
+  await writeFile(path.join(store.dir(p.id),'promo.mp4'),Buffer.from('completed graphics-only promo'));
   await writeFile(path.join(store.dir(p.id),'stale.mp4'),Buffer.from('old export'));
   const probe=createServer();await new Promise<void>(resolve=>probe.listen(0,'127.0.0.1',resolve));
   const port=(probe.address() as {port:number}).port;await new Promise<void>(resolve=>probe.close(()=>resolve()));
@@ -37,6 +38,20 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   const mediaType=await fetch(base+'/api/sample',{method:'POST',headers:{'content-type':'text/plain'},body:'{}'});assert.equal(mediaType.status,415);
   // Fetch normalizes Host on recent Node versions; use a raw HTTP request for the rebinding case.
   const wrongHost=await new Promise<number|undefined>((resolve,reject)=>{const req=httpGet(base+'/api/projects',{headers:{host:`hostile.example:${port}`}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);});assert.equal(wrongHost,403);
+  const invalidFocus=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],focus:{x:1.5,y:.5,zoom:1.6}}]})});
+  assert.equal(invalidFocus.status,400);
+  const invalidMask=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],redactions:[{x:.8,y:.1,width:.3,height:.4}]}]})});
+  assert.equal(invalidMask.status,400);
+  const cameraOnly=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({scenes:[{...p.scenes[0],focus:{x:.6,y:.5,zoom:1.4},redactions:[{x:.1,y:.2,width:.3,height:.4}]}]})});
+  assert.equal(cameraOnly.status,200);const cameraProject=await cameraOnly.json();
+  assert.deepEqual(cameraProject.outputs.map((output:{kind:string})=>output.kind),['promo']);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/demo.mp4`)).status,404);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/promo.mp4`)).status,200);
+  const styled=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({renderSettings:{motion:'subtle',subtitles:false,cursorHighlights:false}})});
+  assert.equal(styled.status,200);const styledProject=await styled.json();
+  assert.deepEqual(styledProject.renderSettings,{motion:'subtle',subtitles:false,cursorHighlights:false});
+  assert.equal(styledProject.scenes.length,1);assert.deepEqual(styledProject.outputs,[]);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/demo-poster.jpg`)).status,404);
   const changed=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({brief:{description:'Updated product description'}})});assert.equal(changed.status,200);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo.mp4`)).status,404);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo-poster.jpg`)).status,404);
