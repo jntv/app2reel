@@ -6,7 +6,7 @@ import type { Page } from 'playwright';
 import type { PrivacyMask, ProductTheme, Project, Scene } from '../shared/types.js';
 import type { FilmState } from './film-state.js';
 import { demoTemplate } from './demo-template.js';
-import { attentionBounds, cameraKeys, cameraTiming, cameraFilter, cameraForFrame, clipTiming, demoLayout, ease, projectArea, projectCursor, sourceTime } from './demo-motion.js';
+import { attentionBounds, cameraKeys, cameraTiming, cameraFilter, cameraForFrame, clipTiming, demoLayout, ease, projectArea, projectCursor, sourceTime, transitionFilter } from './demo-motion.js';
 import { cursorAt, extractRenderedCursorFrames, type CursorPoint } from './cursor-detection.js';
 import { privacyFilters, type PrivacyRectangle } from './demo-privacy.js';
 import {prepareDemoEdit} from './demo-edit.js';
@@ -150,16 +150,7 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
   } else {
     // Extend only the boundary stills, then overlap them. Original scene/narration
     // clocks remain unchanged: no 0.2-second shortening at every edit.
-    const transition = Math.min(6 / fps, ...scenes.map(scene => scene.frames / fps / 4));
-    const half = transition / 2;
-    const filters = scenes.map((_, i) => `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS,tpad=start_mode=clone:start_duration=${i === 0 ? 0 : half}:stop_mode=clone:stop_duration=${i === scenes.length - 1 ? 0 : half}[clip${i}]`);
-    let elapsed = scenes[0].frames / fps;
-    let label = 'clip0';
-    for (let i = 1; i < scenes.length; i += 1) {
-      const next = `join${i}`;
-      filters.push(`[${label}][clip${i}]xfade=transition=fade:duration=${transition}:offset=${(elapsed - half).toFixed(8)}[${next}]`);
-      label = next; elapsed += scenes[i].frames / fps;
-    }
+    const {filters,label}=transitionFilter(scenes,fps);
     await runEncoder([
       '-filter_complex_threads', '2', ...segments.flatMap(file => ['-i', file]), '-f', 'lavfi', '-i', sound,
       '-filter_complex', filters.join(';'), '-map', `[${label}]`, '-map', `${segments.length}:a:0`, ...encodingOptions(),

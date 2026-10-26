@@ -9,6 +9,7 @@ import { subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
 import { refreshProductDesign, refineThemeFromScreenshots } from './product-theme.js';
 import { directShot } from './shot-direction.js';
 import { buildStoryboard, spokenWordBudget, storyboardEvidence, storyboardPlanSchema, StoryboardPacingError, type PlannedScene } from './storyboard.js';
+import {draftFilmEdits,syncReviewedSources} from './edit-plan.js';
 
 const researchSchema={type:'object',properties:{sources:{type:'array',items:{type:'object',properties:{title:{type:'string'},url:{type:'string'},summary:{type:'string'}},required:['title','url','summary'],additionalProperties:false}}},required:['sources'],additionalProperties:false};
 
@@ -18,6 +19,24 @@ export class Pipeline {
   isBusy(id?:string){return !!this.job && (!id||this.job.id===id);}
   assertIdle(){if(this.job)throw Object.assign(new Error('A studio job is already running. Finish or cancel it first.'),{status:409});}
   cancel(id:string){if(this.job?.id===id)this.job.controller.abort();}
+  async plan(p:Project,targets:{demo:number;promo:number},notes=''){
+    this.assertIdle();
+    if(!p.scenes.length||!p.recording)throw new Error('Explore the product before planning an edit.');
+    // PUT synchronizes deliberate primary-source edits into this catalog. Here
+    // merge masks from every current view without promoting derived tail shots.
+    const reviewed=p.filmPlans?Object.values(p.filmPlans).flatMap(plan=>plan?.scenes||[]):p.scenes;
+    const sources=syncReviewedSources(p.editSources?.length?p.editSources:p.scenes,[],reviewed);
+    await this.start(p,async signal=>{
+      p.stage='planning';p.progress=5;p.error=undefined;
+      await this.store.log(p,'Directing separate walkthrough and motion-film editing plans from the recorded product evidence.');
+      const status=await this.ai.status();if(!status.connected)throw new Error(status.message);
+      const plans=await draftFilmEdits(p,sources,targets,notes,this.ai,signal);
+      if(signal.aborted)throw new Error('Editing plan cancelled.');
+      p.editSources=sources;p.filmPlans=plans;p.scenes=plans.demo.scenes;p.brief.duration=targets.demo;p.brief.promoDuration=targets.promo;p.outputs=[];
+      p.stage='review';p.progress=100;await this.exportPlan(p);
+      await this.store.log(p,`Editing plans ready: ${targets.demo}s walkthrough and ${targets.promo}s motion film. Review timing, camera moves and transitions before rendering.`);
+    });
+  }
   async refreshDesign(p:Project){
     this.assertIdle();const controller=new AbortController();this.job={id:p.id,controller};
     try{
@@ -36,7 +55,7 @@ export class Pipeline {
   }
   async explore(p:Project,credentials?:Credentials){
     await this.start(p,async(signal)=>{
-      p.stage='researching';p.progress=3;p.error=undefined;p.shots=[];p.findings=p.brief.features.map(feature=>({feature,status:'not-observed',evidence:'Not yet verified in the product.'}));p.scenes=[];p.outputs=[];p.recording=undefined;p.cursorTrack=[];
+      p.stage='researching';p.progress=3;p.error=undefined;p.shots=[];p.findings=p.brief.features.map(feature=>({feature,status:'not-observed',evidence:'Not yet verified in the product.'}));p.scenes=[];p.editSources=undefined;p.filmPlans=undefined;p.outputs=[];p.recording=undefined;p.cursorTrack=[];
       await this.store.log(p,p.brief.sample?'Exploring the included sample. No AI requests will be made.':'Researching product documentation and tutorials.');
       if(p.brief.sample){p.sources=[{title:'Orbit sample workspace',url:p.brief.url,summary:'Built-in fictional product. Deterministic sample exploration; no external research or AI inference.'}];}
       else {
@@ -64,7 +83,7 @@ Product: ${JSON.stringify({...p.brief,url:cleanURL(p.brief.url),allowedOrigins:p
 Captured evidence: ${JSON.stringify(storyboardEvidence(p.shots,p.findings))}
 Public sources: ${JSON.stringify(p.sources)}
 Each evidence item names CURRENT captured content, its INCOMING completed action when recorded, and its later OUTGOING explorer intent. A selected scene's footage covers the incoming action and current result; it stops before that outgoing action. Narrate only what that interval actually shows. An outgoing intent is not a completed action or proof of a capability. A missing incoming record means describe the visible current result without inventing a click or form entry. Do not claim loading delays have been removed by showing fabricated interactions.
-Return ${Math.min(3,p.shots.length)} to ${Math.min(6,p.shots.length)} distinct scenes with strictly increasing, valid zero-based shotIndex. For each provide a short title, concise caption, natural spoken narration, desired duration in seconds, and an exact feature name from that shot's current observedFeatures (or empty). Use variable durations based on the actual action and explanation; durations should total ${p.brief.duration} seconds and will be normalized to that total. Keep EACH narration around 2.2 words/second of its requested duration and ALL narration within ${spokenWordBudget(p.brief.duration)} spoken words total, leaving room for pauses. Opening and closing can be part of the first/last real moment. Never invent actions, capabilities, numbers, endorsements, populated data, or pricing. Use direct, clear language.`;
+Return ${Math.min(3,p.shots.length)} to ${Math.min(16,p.shots.length)} distinct scenes with strictly increasing, valid zero-based shotIndex. Choose useful, visibly different moments rather than duplicate views. For each provide a short title, concise caption, natural spoken narration, desired duration in seconds, and an exact feature name from that shot's current observedFeatures (or empty). Use variable durations based on the actual action and explanation; durations should total ${p.brief.duration} seconds and will be normalized to that total. Keep EACH narration around 1.8 words/second of its requested duration and ALL narration within ${spokenWordBudget(p.brief.duration)} spoken words total, leaving room for pauses. Opening and closing can be part of the first/last real moment. Never invent actions, capabilities, numbers, endorsements, populated data, or pricing. Use direct, clear language.`;
         let correction='';
         for(let attempt=0;attempt<2;attempt++){
           const plan=await this.ai.json<{scenes:PlannedScene[]}>(prompt+correction,storyboardPlanSchema,{signal,webSearch:false});planned=plan.scenes;
@@ -80,6 +99,12 @@ Return ${Math.min(3,p.shots.length)} to ${Math.min(6,p.shots.length)} distinct s
       if(!p.brief.sample)for(let i=0;i<p.scenes.length;i++){
         p.progress=85+Math.round(i/p.scenes.length*12);await this.store.log(p,`Directing camera and feature highlights for scene ${i+1} of ${p.scenes.length}.`);
         Object.assign(p.scenes[i],await directShot(p.scenes[i],p.shots[storyboard.shotIndices[i]],this.store.dir(p.id),this.ai,signal));
+      }
+      if(!p.brief.sample){
+        p.stage='planning';p.progress=98;await this.store.log(p,'Planning separate scripts, camera holds and transitions for each film.');
+        p.editSources=structuredClone(p.scenes);
+        p.filmPlans=await draftFilmEdits(p,p.editSources,{demo:p.brief.duration,promo:p.brief.promoDuration||Math.min(45,p.brief.duration)},'',this.ai,signal);
+        p.scenes=p.filmPlans.demo!.scenes;
       }
       p.stage='review';p.progress=100;await this.exportPlan(p);await this.store.log(p,'Your storyboard is ready. Review the scenes, then render your two films.');
     });
@@ -100,7 +125,7 @@ Return ${Math.min(3,p.shots.length)} to ${Math.min(6,p.shots.length)} distinct s
     const directory=this.store.dir(p.id);
     const cues=subtitleCues(p.scenes);
     await Promise.all([
-      writeFile(path.join(directory,'storyboard.json'),JSON.stringify({product:p.brief.name,scenes:p.scenes,findings:p.findings,renderSettings:p.renderSettings,productTheme:p.productTheme},null,2)),
+      writeFile(path.join(directory,'storyboard.json'),JSON.stringify({version:2,product:p.brief.name,scenes:p.scenes,filmPlans:p.filmPlans,editSources:p.editSources,findings:p.findings,renderSettings:p.renderSettings,productTheme:p.productTheme},null,2)),
       writeFile(path.join(directory,'research.json'),JSON.stringify({sources:p.sources,findings:p.findings},null,2)),
       writeFile(path.join(directory,'narration.txt'),p.scenes.map((s,i)=>`${i+1}. ${s.title}\n${s.narration}`).join('\n\n')),
       // Completed films remain authoritative while only camera/masks change or a rerender is pending.
@@ -109,6 +134,14 @@ Return ${Math.min(3,p.shots.length)} to ${Math.min(6,p.shots.length)} distinct s
         writeFile(path.join(directory,'captions.srt'),subtitleSrt(cues)),
         writeFile(path.join(directory,'narration.srt'),subtitleSrt(cues)),
         writeFile(path.join(directory,'captions.vtt'),subtitleVtt(cues))
+      ]:[]),
+      ...Object.entries(p.filmPlans||{}).flatMap(([kind,plan])=>plan?[
+        writeFile(path.join(directory,`${kind}-narration.txt`),plan.scenes.map((s,i)=>`${i+1}. ${s.title}\n${s.narration}`).join('\n\n')),
+        ...(!p.outputs.some(output=>output.kind===kind&&output.narrated)?[
+          writeFile(path.join(directory,`${kind}-captions.srt`),subtitleSrt(subtitleCues(plan.scenes))),
+          writeFile(path.join(directory,`${kind}-narration.srt`),subtitleSrt(subtitleCues(plan.scenes))),
+          writeFile(path.join(directory,`${kind}-captions.vtt`),subtitleVtt(subtitleCues(plan.scenes))),
+        ]:[])
       ]:[])
     ]);
   }

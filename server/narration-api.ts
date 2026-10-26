@@ -5,10 +5,11 @@ import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpeg from 'ffmpeg-static';
 import { z } from 'zod';
-import { localVoiceStatus, startVoiceSetup, stopVoiceSetup } from './local-voice.js';
+import { localVoiceStatus, NATURAL_VOICES, startVoiceSetup, stopVoiceSetup } from './local-voice.js';
 import { narrationEngine, prepareNarration } from './narration.js';
 
-export const voicePreviewSchema=z.object({engine:z.enum(['natural','system']),voice:z.enum(['melo_india','af_heart','am_michael']).optional(),text:z.string().trim().min(1).max(200).optional()}).strict();
+const voiceChoice=z.enum(['melo_india','af_heart','am_michael','qwen_indian_male','qwen_indian_female']);
+export const voicePreviewSchema=z.object({engine:z.enum(['natural','system']),voice:voiceChoice.optional(),text:z.string().trim().min(1).max(200).optional()}).strict();
 const previewText='Start with a clearer view. Bring your team, your work, and your next steps together.';
 
 /** Preview files are ephemeral and accessible only by server-issued identifiers. */
@@ -19,7 +20,7 @@ export function registerNarrationRoutes(app:express.Express,dataDirectory:string
   const wrap=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>(req:express.Request,res:express.Response,next:express.NextFunction)=>{void fn(req,res).catch(next);};
   app.get('/api/narration/status',(_req,res)=>res.json(localVoiceStatus(!!narrationEngine())));
   app.post('/api/narration/setup',wrap(async(req,res)=>{
-    const body=z.object({voice:z.enum(['melo_india','af_heart','am_michael']).optional()}).strict().parse(req.body);assertIdle();
+    const body=z.object({voice:voiceChoice.optional()}).strict().parse(req.body);assertIdle();
     res.status(202).json(startVoiceSetup(!!narrationEngine(),body.voice));
   }));
   app.post('/api/narration/preview',wrap(async(req,res)=>{
@@ -46,7 +47,7 @@ export function registerNarrationRoutes(app:express.Express,dataDirectory:string
       if(controller.signal.aborted)throw new Error('Voice preview cancelled.');
       await rename(audio,target);previews.set(file,target);
       while(previews.size>4){const oldest=previews.keys().next().value!;const old=previews.get(oldest)!;previews.delete(oldest);await rm(old,{force:true});}
-      res.json({url:`/api/narration/previews/${file}`,voice:track.voice,label:body.engine==='system'?'System voice':track.voice==='melo_india'?'Indian English':track.voice==='am_michael'?'Michael':'Heart'});
+      res.json({url:`/api/narration/previews/${file}`,voice:track.voice,label:body.engine==='system'?'System voice':NATURAL_VOICES.find(voice=>voice.id===track.voice)?.label||track.voice});
     }finally{res.removeListener('close',disconnected);if(temporary)await rm(temporary,{recursive:true,force:true});if(active===controller)active=undefined;}
   }));
   app.get('/api/narration/previews/:file',(req,res,next)=>{

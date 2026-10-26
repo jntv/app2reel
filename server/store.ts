@@ -10,7 +10,7 @@ export const briefSchema = z.object({
   description: z.string().trim().min(5).max(5000), purpose: z.string().trim().min(3).max(2000),
   actors: z.string().trim().min(2).max(2000), features: z.array(z.string().trim().min(1).max(200)).min(1).max(20),
   brandColor: z.string().regex(/^#[0-9a-f]{6}$/i).default('#e85b32'),
-  duration: z.number().int().min(10).max(90).default(30), resolution: z.enum(['720p','1080p']).default('1080p'),
+  duration: z.number().int().min(10).max(180).default(90), promoDuration:z.number().int().min(10).max(90).optional(), resolution: z.enum(['720p','1080p']).default('1080p'),
   maxSteps: z.number().int().min(3).max(60).default(16),
   allowedOrigins: z.array(z.string().url().refine(v=>{const u=new URL(v);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password;})).max(10).default([]),
   allowWrites: z.boolean().default(false), sample: z.boolean().default(false)
@@ -19,7 +19,7 @@ export const briefSchema = z.object({
 export const renderSettingsSchema = z.object({
   motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean(),
   narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional(), promoAspect: z.enum(['landscape','portrait']).optional(),
-  narrationEngine:z.enum(['natural','system']).optional(),narrationVoice:z.enum(['melo_india','af_heart','am_michael']).optional()
+  narrationEngine:z.enum(['natural','system']).optional(),narrationVoice:z.enum(['melo_india','af_heart','am_michael','qwen_indian_male','qwen_indian_female']).optional()
 }).strict();
 
 const colorSchema=z.string().regex(/^#[0-9a-f]{6}$/i);
@@ -28,7 +28,7 @@ const rectangleSchema=z.object({x:z.number().min(0).max(1),y:z.number().min(0).m
 const visualModelSchema=z.object({heading:z.string().max(100).optional(),labels:z.array(z.string().max(70)).max(12),layout:z.enum(['dashboard','table','calendar','form','analytics','workspace']),accent:colorSchema.optional()}).strict();
 
 export const sceneSchema = z.object({
-  id:z.string().min(1).max(100),title:z.string().min(1).max(160),caption:z.string().max(360),
+  id:z.string().min(1).max(100),sourceId:z.string().min(1).max(100).optional(),sourceRole:z.enum(['primary','detail']).optional(),title:z.string().min(1).max(160),caption:z.string().max(360),
   narration:z.string().max(2000),duration:z.number().min(1).max(30),
   screenshot:z.string().regex(/^[a-zA-Z0-9._-]+\.(png|jpg)$/).optional(),
   recordingStart:z.number().nonnegative().optional(),recordingEnd:z.number().nonnegative().optional(),
@@ -37,8 +37,13 @@ export const sceneSchema = z.object({
   focus:z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),zoom:z.number().min(1).max(2.4)}).strict().optional(),
   focusArea:rectangleSchema.optional(),visualModel:visualModelSchema.optional(),
   focusRevealAt:z.number().min(0).max(30).optional(),
-  redactions:z.array(rectangleSchema).max(8).optional()
+  redactions:z.array(rectangleSchema).max(8).optional(),
+  camera:z.object({contextHold:z.number().min(0).max(30),moveDuration:z.number().min(.2).max(10),releaseDuration:z.number().min(0).max(10)}).strict().optional(),
+  transition:z.object({type:z.enum(['cut','dissolve','fade','slide']),duration:z.number().min(0).max(1.2)}).strict().refine(value=>value.type==='cut'?value.duration===0:value.duration>=.1,'A cut has zero duration; an animated transition needs at least 0.1 seconds.').optional()
 }).strict().refine(scene=>scene.focusRevealAt===undefined||scene.focusRevealAt<=scene.duration,'Focus must begin within the scene.').refine(scene=>!scene.recordingRanges||(scene.recordingStart!==undefined&&scene.recordingEnd!==undefined&&scene.recordingRanges.every((range,i)=>Math.round((range.end-range.start)*30)>=1&&range.start>=scene.recordingStart!&&range.end<=scene.recordingEnd!&&(i===0||range.start>=scene.recordingRanges![i-1].end))),'Recording cuts must be ordered and fit inside the source clip.');
+
+export const filmPlanSchema=z.object({scenes:z.array(sceneSchema).min(1).max(20),targetDuration:z.number().min(1).max(180),rationale:z.string().max(3000).optional()}).strict().refine(plan=>plan.scenes.reduce((sum,scene)=>sum+Math.round(scene.duration*30),0)===Math.round(plan.targetDuration*30),'Film scenes must match the target duration.');
+export const filmPlansSchema=z.object({demo:filmPlanSchema.optional(),promo:filmPlanSchema.optional()}).strict().refine(plans=>!!(plans.demo||plans.promo),'Provide at least one film plan.');
 
 export class Store {
   readonly events = new EventEmitter();
@@ -51,7 +56,7 @@ export class Store {
       if(!/^[0-9a-f-]{36}$/.test(id)) continue;
       try { const p = JSON.parse(await readFile(path.join(this.root,id,'project.json'),'utf8')) as Project;
         if(p.id !== id) continue;
-        if(['researching','exploring','rendering'].includes(p.stage)) { p.stage='failed'; p.message='Run interrupted by server restart. You can start again.';p.error=p.message; }
+        if(['researching','exploring','planning','rendering'].includes(p.stage)) { p.stage='failed'; p.message='Run interrupted by server restart. You can start again.';p.error=p.message; }
         this.projects.set(id,p);
       } catch { /* ignore incomplete project directories */ }
     }

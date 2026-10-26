@@ -11,7 +11,7 @@ export const spokenWordBudget = (duration: number) => Math.floor(duration * 2.2)
 
 export const storyboardPlanSchema: Record<string, unknown> = {
   type: 'object', additionalProperties: false, required: ['scenes'], properties: {
-    scenes: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'object', additionalProperties: false,
+    scenes: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'object', additionalProperties: false,
       required: ['title', 'caption', 'narration', 'duration', 'shotIndex', 'feature'], properties: {
         title: { type: 'string' }, caption: { type: 'string' }, narration: { type: 'string' },
         duration: { type: 'number', minimum: 1, maximum: 30 }, shotIndex: { type: 'integer', minimum: 0 }, feature: { type: 'string' },
@@ -28,7 +28,7 @@ export function chronologicalPlan(plan: readonly PlannedScene[], shots: readonly
       || !['title', 'caption', 'narration', 'feature'].every(key => typeof scene[key as keyof PlannedScene] === 'string') || !scene.title.trim()) continue;
     if (!selected.has(scene.shotIndex)) selected.set(scene.shotIndex, scene);
   }
-  return [...selected.values()].sort((a, b) => a.shotIndex - b.shotIndex).slice(0, 6);
+  return [...selected.values()].sort((a, b) => a.shotIndex - b.shotIndex).slice(0, 16);
 }
 
 /** Explicitly distinguish entering a view from the explorer's later outgoing intent. */
@@ -53,7 +53,7 @@ export function storyboardEvidence(shots: readonly Shot[], findings: readonly Fi
 
 /** Normalize requested pacing while preserving a readable speech floor and an exact frame budget. */
 export function sceneDurations(plan: readonly PlannedScene[], totalDuration: number): number[] {
-  if (!finite(totalDuration) || totalDuration < 1 || totalDuration > 90 || !plan.length) throw new Error('The storyboard needs a valid film duration and at least one captured moment.');
+  if (!finite(totalDuration) || totalDuration < 1 || totalDuration > 180 || !plan.length) throw new Error('The storyboard needs a valid film duration and at least one captured moment.');
   const target = Math.round(totalDuration * FPS);
   const counts = plan.map(scene => words(script(scene)));
   if (counts.reduce((a, b) => a + b, 0) > spokenWordBudget(totalDuration)) throw new StoryboardPacingError(`The narration exceeds this film’s ${spokenWordBudget(totalDuration)}-word budget. Shorten the script before rendering.`);

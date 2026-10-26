@@ -17,15 +17,18 @@ for (let index = 0; index < arguments_.length; index += 1) {
   if (arguments_[index] === '--dir' && arguments_[index + 1]) directory = arguments_[++index];
   else if (arguments_[index] === '--voice' && arguments_[index + 1]) voice = arguments_[++index];
   else if (arguments_[index] === '--status') statusOnly = true;
-  else throw new Error('Usage: node scripts/setup-voice.mjs [--dir path] [--voice melo_india|af_heart|am_michael] [--status]');
+  else throw new Error('Usage: node scripts/setup-voice.mjs [--dir path] [--voice melo_india|af_heart|am_michael|qwen_indian_male|qwen_indian_female] [--status]');
 }
-if (!['melo_india', 'af_heart', 'am_michael'].includes(voice)) throw new Error('Choose melo_india, af_heart or am_michael.');
+if (!['melo_india', 'af_heart', 'am_michael', 'qwen_indian_male', 'qwen_indian_female'].includes(voice)) throw new Error('Choose a supported local voice.');
 const indian = voice === 'melo_india';
+const qwen = voice === 'qwen_indian_male' || voice === 'qwen_indian_female';
+const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
+const qwenRecipe = JSON.parse(await readFile(path.join(sourceDirectory, '../assets/voices/qwen-recipes.json'), 'utf8'));
 directory = path.resolve(directory);
-const venvPython = path.join(directory, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-const requirements = path.join(path.dirname(fileURLToPath(import.meta.url)), 'voice-requirements.txt');
+const venvPython = path.join(directory, qwen ? 'qwen-venv' : 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+const requirements = path.join(sourceDirectory, qwen ? 'qwen-voice-requirements.txt' : 'voice-requirements.txt');
 const allVersions = Object.fromEntries((await readFile(requirements, 'utf8')).split(/\r?\n/).filter(line => /^[a-z][a-z0-9_-]*==\S+$/i.test(line)).map(line => line.split('==')));
-const excluded = indian ? ['kokoro-onnx', 'onnxruntime'] : ['sherpa-onnx', 'sherpa-onnx-core'];
+const excluded = qwen ? [] : indian ? ['kokoro-onnx', 'onnxruntime'] : ['sherpa-onnx', 'sherpa-onnx-core'];
 const versions = Object.fromEntries(Object.entries(allVersions).filter(([name]) => !excluded.includes(name)));
 const kokoroAssets = [
   { name: 'kokoro-v1.0.onnx', bytes: 325505369, sha256: 'beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a' },
@@ -39,8 +42,9 @@ const meloAssets = [
   { name: 'README.md', bytes: 257, sha256: 'ae6e44dead53dfdbd5b4a77106226f3118eb910222b46cb5533a3860773fc6c7' },
 ].map(asset => ({...asset, name: `melo-en/${asset.name}`}));
 const meloArchive = {name: 'vits-melo-tts-en.tar.bz2', bytes: 162758237, sha256: 'f87bc5752ea3ec34273a2cc0c5086854c18b6b89dfd0534b5248e86a14cedb5d', url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-en.tar.bz2'};
-const assets = indian ? meloAssets : kokoroAssets;
-const markerFile = path.join(directory, indian ? '.melo-installed.json' : '.installed.json');
+const qwenAssets = qwenRecipe.model.assets.map(asset => ({...asset, name: `${qwenRecipe.model.directory}/${asset.name}`, url: `https://huggingface.co/${qwenRecipe.model.repository}/resolve/${qwenRecipe.model.revision}/${asset.name}`}));
+const assets = qwen ? qwenAssets : indian ? meloAssets : kokoroAssets;
+const markerFile = path.join(directory, qwen ? '.qwen-installed.json' : indian ? '.melo-installed.json' : '.installed.json');
 const report = (stage, message, progress, extra = {}) => process.stdout.write(`${JSON.stringify({ stage, message, progress, voice, ...extra })}\n`);
 const exists = async file => access(file).then(() => true, () => false);
 async function hash(file) {
@@ -53,7 +57,7 @@ function pythonVersion(command) {
   try { const version = JSON.parse(result.stdout); return result.status === 0 && version[0] === 3 && version[1] >= 12 && version[1] <= 13 ? version : undefined; } catch { return undefined; }
 }
 function installedVersions() {
-  const imports = indian ? 'import sherpa_onnx,numpy,phonemizer,espeakng_loader' : 'import kokoro_onnx,numpy,onnxruntime';
+  const imports = qwen ? 'import mlx.core,mlx_audio,numpy' : indian ? 'import sherpa_onnx,numpy,phonemizer,espeakng_loader' : 'import kokoro_onnx,numpy,onnxruntime';
   const result = spawnSync(venvPython, ['-c', `import json,importlib.metadata;${imports};print(json.dumps({n:importlib.metadata.version(n) for n in ${JSON.stringify(Object.keys(versions))}}))`], { encoding: 'utf8', timeout: 30000 });
   try { const current = JSON.parse(result.stdout); return result.status === 0 && Object.entries(versions).every(([name, version]) => current[name] === version) ? current : undefined; } catch { return undefined; }
 }
@@ -72,6 +76,7 @@ async function verified(asset, base = path.join(directory, 'models')) {
 async function download(asset, index = 0, count = 1) {
   if (await verified(asset)) { report('models', `Verified existing ${asset.name}`, 20 + (index + 1) / count * 70); return; }
   const target = path.join(directory, 'models', asset.name);
+  await mkdir(path.dirname(target), {recursive:true, mode:0o700});
   const temporary = `${target}.${randomUUID()}.part`;
   const response = await fetch(asset.url, { signal: AbortSignal.timeout(15 * 60 * 1000) });
   if (!response.ok || !response.body) throw new Error(`Model download failed (${response.status}).`);
@@ -110,6 +115,11 @@ async function installMelo() {
 }
 
 try {
+  if (qwen && (process.platform !== 'darwin' || process.arch !== 'arm64')) throw new Error('Designed voices require an Apple Silicon Mac with macOS 14 or newer. Choose another local voice on this computer.');
+  if (qwen) {
+    const reference = qwenRecipe.voices[voice];
+    if (await hash(path.join(sourceDirectory, '../assets/voices', reference.reference)) !== reference.sha256) throw new Error('The bundled speaker reference failed verification. Restore assets/voices from the repository.');
+  }
   if (statusOnly) {
     const marker = await readFile(markerFile, 'utf8').then(JSON.parse).catch(() => undefined);
     const ready = Boolean(marker && await exists(venvPython) && await Promise.all(assets.map(asset => verified(asset))).then(results => results.every(Boolean)) && installedVersions());
@@ -117,18 +127,19 @@ try {
   } else {
     if (process.platform === 'darwin' && Number(os.release().split('.')[0]) < 23) throw new Error('This pinned local voice runtime requires macOS 14 or newer.');
     report('python', 'Checking Python 3.12 or 3.13', 1);
-    const candidates = [process.env.CAPTURE_PYTHON, await exists(venvPython) ? venvPython : undefined, 'python3.12', 'python3.13', 'python3'].filter(Boolean);
+    const legacyPython = path.join(directory, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    const candidates = [process.env.CAPTURE_PYTHON, await exists(venvPython) ? venvPython : undefined, qwen && await exists(legacyPython) ? legacyPython : undefined, 'python3.12', 'python3.13', 'python3'].filter(Boolean);
     const python = candidates.find(candidate => pythonVersion(candidate));
     if (!python) throw new Error('Install Python 3.12 or 3.13, or set CAPTURE_PYTHON to its executable, then run voice setup again.');
     if (process.env.CAPTURE_PYTHON && !pythonVersion(process.env.CAPTURE_PYTHON)) throw new Error('CAPTURE_PYTHON must point to Python 3.12 or 3.13.');
     await mkdir(path.join(directory, 'models'), { recursive: true, mode: 0o700 });
-    if (!await exists(venvPython)) { report('environment', 'Creating the isolated voice environment', 3); await run(python, ['-m', 'venv', path.join(directory, 'venv')]); }
+    if (!await exists(venvPython)) { report('environment', 'Creating the isolated voice environment', 3); await run(python, ['-m', 'venv', path.join(directory, qwen ? 'qwen-venv' : 'venv')]); }
     if (!pythonVersion(venvPython)) throw new Error('The existing voice venv requires Python 3.12 or 3.13. Choose a new runtime directory.');
     if (!installedVersions()) { report('packages', 'Installing selected local speech packages', 7); await run(venvPython, ['-m', 'pip', 'install', '--disable-pip-version-check', ...Object.entries(versions).map(([name, version]) => `${name}==${version}`)]); }
     if (!installedVersions()) throw new Error('The local voice packages failed verification.');
     if (indian) await installMelo();
     else for (const [index, asset] of assets.entries()) await download(asset, index, assets.length);
-    const marker = { engine: indian ? 'sherpa-onnx-melo' : 'kokoro-onnx', voice, versions, python: venvPython, pythonVersion: pythonVersion(venvPython), provider: 'CPUExecutionProvider', assets, ...(indian ? {archive: meloArchive, speakerId: 2} : {}), installedAt: new Date().toISOString() };
+    const marker = { engine: qwen ? 'qwen3-tts-mlx' : indian ? 'sherpa-onnx-melo' : 'kokoro-onnx', voice, versions, python: venvPython, pythonVersion: pythonVersion(venvPython), provider: qwen ? 'MLX' : 'CPUExecutionProvider', assets, ...(indian ? {archive: meloArchive, speakerId: 2} : {}), ...(qwen ? {modelRevision:qwenRecipe.model.revision} : {}), installedAt: new Date().toISOString() };
     await writeFile(`${markerFile}.tmp`, JSON.stringify(marker, null, 2), { mode: 0o600 }); await rename(`${markerFile}.tmp`, markerFile);
     report('ready', 'Selected local voice is ready.', 100, { ready: true, directory, python: venvPython });
   }

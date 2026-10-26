@@ -5,6 +5,7 @@ import path from 'node:path';
 import type {Scene} from '../shared/types.js';
 import type {NarrationOptions, NarrationTrack} from './narration.js';
 import {subtitleCues, type SubtitleCue} from './subtitles.js';
+import {naturalVoiceIdentity} from './local-voice.js';
 
 const VERSION = 1;
 const RATE = 48000;
@@ -13,8 +14,8 @@ type SpeechScene = Pick<Scene, 'narration'|'caption'|'duration'>;
 const speechText = (scene: SpeechScene): string => (scene.narration.trim() || scene.caption.trim()).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 2000);
 function identity(options: NarrationOptions) {
   const engine = options.engine || 'natural';
-  return {engine, voice: engine === 'system' ? process.platform === 'darwin' ? 'Samantha' : 'en-us' : options.voice || 'melo_india',
-    provider: engine === 'system' ? process.platform === 'darwin' ? 'macOS' : 'eSpeak' : (options.voice || 'melo_india') === 'melo_india' ? 'MeloTTS ONNX' : 'Kokoro ONNX'};
+  const voice=engine==='system'?process.platform==='darwin'?'Samantha':'en-us':options.voice||'melo_india';
+  return {engine,voice,...(engine==='system'?{provider:process.platform==='darwin'?'macOS':'eSpeak'}:naturalVoiceIdentity(voice))};
 }
 function speechScenes(scenes: readonly SpeechScene[]) {
   if (!scenes.length || scenes.length > 20) throw new Error('Invalid narration scene count.');
@@ -22,7 +23,7 @@ function speechScenes(scenes: readonly SpeechScene[]) {
     if (!Number.isFinite(scene.duration) || scene.duration <= 0 || typeof scene.narration !== 'string' || typeof scene.caption !== 'string') throw new Error('Invalid narration scene.');
     return {text: speechText(scene), frames: Math.max(1, Math.round(scene.duration * 30))};
   });
-  if (normalized.reduce((sum, scene) => sum + scene.frames, 0) > 2700) throw new Error('Narration exceeds the supported timeline.');
+  if (normalized.reduce((sum, scene) => sum + scene.frames, 0) > 5400) throw new Error('Narration exceeds the supported timeline.');
   return normalized;
 }
 
@@ -99,14 +100,15 @@ function coherentCues(value: unknown, scenes: ReturnType<typeof speechScenes>): 
 }
 
 /** Reuse one verified project narration without synthesizing a second voice take. */
-export async function readPreparedNarration(scenes: readonly SpeechScene[], options: NarrationOptions, directory: string, temporary: string): Promise<NarrationTrack | undefined> {
+export async function readPreparedNarration(scenes: readonly SpeechScene[], options: NarrationOptions, directory: string, temporary: string,kind?:'demo'|'promo'): Promise<NarrationTrack | undefined> {
   const created: string[] = [];
   try {
     const [sourceInfo, targetInfo] = await Promise.all([lstat(directory), lstat(temporary)]);
     if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink() || !targetInfo.isDirectory() || targetInfo.isSymbolicLink()) return undefined;
     const [source, target] = await Promise.all([realpath(directory), realpath(temporary)]);
     if (source === target) return undefined;
-    const [timingBytes, wav] = await Promise.all([boundedFile(source, 'narration-timing.json', 1024 * 1024), boundedFile(source, 'narration.wav', 90 * RATE * 2 + 65536)]);
+    const prefix=kind?`${kind}-`:'';
+    const [timingBytes, wav] = await Promise.all([boundedFile(source, `${prefix}narration-timing.json`, 1024 * 1024), boundedFile(source, `${prefix}narration.wav`, 180 * RATE * 2 + 65536)]);
     if (!timingBytes || !wav) return undefined;
     const metadata = JSON.parse(timingBytes.toString('utf8'));
     const expected = identity(options), normalized = speechScenes(scenes);

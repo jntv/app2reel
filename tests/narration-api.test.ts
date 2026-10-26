@@ -49,7 +49,7 @@ test('narration status exposes readiness and supported voices without requiring 
   assert.equal(typeof status.systemReady, 'boolean');
   assert.ok(['missing', 'installing', 'ready', 'failed'].includes(status.state));
   assert.equal(typeof status.message, 'string');
-  assert.deepEqual(status.voices.map((voice: { id: string }) => voice.id), ['melo_india', 'af_heart', 'am_michael']);
+  assert.deepEqual(status.voices.map((voice: { id: string }) => voice.id), ['melo_india', 'af_heart', 'am_michael', 'qwen_indian_male', 'qwen_indian_female']);
   assert.equal(idleChecks, 0);
   assert.deepEqual(await readdir(api.directory), [], 'Reading readiness must not create preview or setup artifacts.');
 });
@@ -81,12 +81,12 @@ test('narration requests strictly reject invalid engines, voices, oversized text
 test('busy narration setup and preview return409 before creating files or starting downloads', async t => {
   let idleChecks = 0;
   const api = await fixture(t, () => { idleChecks += 1; throw Object.assign(new Error('Another job is running.'), { status: 409 }); });
-  for (const [endpoint, body] of [['setup', {}], ['preview', { engine: 'system', text: 'A short local sample.' }]] as const) {
+  for (const [endpoint, body] of [['setup', {}], ['setup',{voice:'qwen_indian_female'}],['preview',{engine:'natural',voice:'qwen_indian_male'}],['preview', { engine: 'system', text: 'A short local sample.' }]] as const) {
     const response = await api.post(endpoint, body);
     assert.equal(response.status, 409);
     assert.match((await response.json()).error, /Another job/);
   }
-  assert.equal(idleChecks, 2);
+  assert.equal(idleChecks, 4);
   assert.deepEqual(await readdir(api.directory), []);
 });
 

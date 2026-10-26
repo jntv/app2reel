@@ -2,8 +2,10 @@
 """Offline neural batch synthesis. JSON stdin/stdout; diagnostics go to stderr."""
 import argparse
 import contextlib
+import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import sys
@@ -149,7 +151,8 @@ def main():
         raise ValueError("Voice request must be a JSON object.")
     voice = request.get("voice", "melo_india")
     items = request.get("items")
-    if voice not in ("melo_india", "af_heart", "am_michael"):
+    qwen = voice in ("qwen_indian_male", "qwen_indian_female")
+    if voice not in ("melo_india", "af_heart", "am_michael", "qwen_indian_male", "qwen_indian_female"):
         raise ValueError("Choose a supported English natural voice.")
     if not isinstance(items, list) or not 1 <= len(items) <= 24:
         raise ValueError("Supply between one and 24 narration items.")
@@ -164,7 +167,21 @@ def main():
     with contextlib.redirect_stdout(sys.stderr), tempfile.TemporaryDirectory(prefix="capture-voice-") as work:
         import numpy as np
         results = []
-        if voice == "melo_india":
+        if qwen:
+            if sys.platform != "darwin" or platform.machine() != "arm64":
+                raise ValueError("Designed voices require an Apple Silicon Mac with macOS 14 or newer.")
+            reference_dir = Path(__file__).resolve().parent.parent / "assets/voices"
+            recipe = json.loads((reference_dir / "qwen-recipes.json").read_text(encoding="utf-8"))
+            reference = recipe["voices"][voice]
+            reference_file = reference_dir / reference["reference"]
+            with reference_file.open("rb") as source:
+                if hashlib.file_digest(source, "sha256").hexdigest() != reference["sha256"]:
+                    raise ValueError("The bundled speaker reference failed verification. Restore assets/voices from the repository.")
+            import mlx.core as mx
+            from mlx_audio.tts.utils import load_model
+            mx.set_cache_limit(512 * 1024 ** 2)
+            tts = load_model(runtime / "models" / recipe["model"]["directory"])
+        elif voice == "melo_india":
             import sherpa_onnx
             model = runtime / "models/melo-en"
             spoken_texts = [melo_text(item["text"]) for item in items]
@@ -183,7 +200,22 @@ def main():
         try:
             for index, item in enumerate(items):
                 text = item["text"]
-                if voice == "melo_india":
+                if qwen:
+                    settings = dict(recipe["generation"])
+                    mx.random.seed(settings.pop("seed"))
+                    language = settings.pop("language")
+                    chunks = []
+                    # Every scene is conditioned on the same exact audition,
+                    # never a fresh VoiceDesign speaker or another person's voice.
+                    for generated in tts.generate(text=text, ref_audio=str(reference_file), ref_text=reference["transcript"], lang_code=language, verbose=False, **settings):
+                        mx.eval(generated.audio)
+                        chunks.append(np.asarray(generated.audio, dtype=np.float32).reshape(-1))
+                        rate = generated.sample_rate
+                    if not chunks:
+                        raise ValueError("Designed voice synthesis returned no speech.")
+                    audio = np.concatenate(chunks)
+                    phonemes, word_phonemes = [], []
+                elif voice == "melo_india":
                     generated = tts.generate(spoken_texts[index], sid=2, speed=1.0)
                     audio, rate = np.asarray(generated.samples, dtype=np.float32), generated.sample_rate
                     phonemes, word_phonemes = [], []
@@ -200,7 +232,7 @@ def main():
                     "phonemes": phonemes, "wordPhonemes": word_phonemes,
                     "spokenStart": float(start), "spokenEnd": float(end)})
         finally:
-            if voice != "melo_india":
+            if voice not in ("melo_india", "qwen_indian_male", "qwen_indian_female"):
                 tts.voices.close()
     print(json.dumps({"results": results}, ensure_ascii=False), flush=True)
 

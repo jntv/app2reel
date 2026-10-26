@@ -13,9 +13,10 @@ import { subtitleAt, subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.
 import { prepareNarration } from './narration.js';
 import { readPreparedNarration } from './narration-cache.js';
 import { productFontCss, resolveFilmTheme } from './film-theme.js';
+import {transitionFilter} from './demo-motion.js';
 
 const FPS = 30;
-const MAX_SECONDS = 90;
+const MAX_SECONDS = 180;
 const MAX_SCENES = 20;
 const activeDirectories = new Set<string>();
 type RenderOptions = { signal?: AbortSignal; onProgress?: (progress: number, message: string) => void };
@@ -54,19 +55,17 @@ async function containedFile(directory: string, relative: string): Promise<strin
   return resolved;
 }
 
-function timeline(scenes: Scene[]): TimedScene[] {
+export function renderTimeline(scenes: readonly Scene[]): TimedScene[] {
   if (!scenes.length) throw new Error('Create and review a storyboard before rendering videos.');
-  const bounded: TimedScene[] = [];
-  let remaining = MAX_SECONDS * FPS;
-  for (const scene of scenes.slice(0, MAX_SCENES)) {
+  if(scenes.length>MAX_SCENES)throw new Error(`A film supports at most ${MAX_SCENES} reviewed scenes.`);
+  const timed=scenes.map(scene=>{
     const seconds = Number(scene.duration);
-    if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('Every storyboard scene needs a positive duration.');
-    const frames = Math.min(remaining, Math.max(1, Math.round(seconds * FPS)));
-    if (!frames) break;
-    bounded.push({ ...scene, duration: frames / FPS, frames });
-    remaining -= frames;
-  }
-  return bounded;
+    if (!Number.isFinite(seconds) || seconds <= 0||seconds>30) throw new Error('Every storyboard scene needs a positive duration of at most 30 seconds.');
+    const frames=Math.max(1,Math.round(seconds*FPS));
+    return {...scene,duration:frames/FPS,frames};
+  });
+  if(timed.reduce((sum,scene)=>sum+scene.frames,0)>MAX_SECONDS*FPS)throw new Error(`A film must be ${MAX_SECONDS} seconds or less; shorten the reviewed timeline.`);
+  return timed;
 }
 
 function humanUrl(value: string): string {
@@ -149,17 +148,13 @@ async function renderPromo(
   const output = path.join(temporary, 'promo.mp4');
   const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
   const duration = totalFrames / FPS;
-  const job = encoder([
-    '-f', 'image2pipe', '-vcodec', 'mjpeg', '-framerate', String(FPS), '-i', 'pipe:0',
-    '-f', 'lavfi', '-i', soundtrack(duration), '-map', '0:v:0', '-map', '1:a:0',
-    ...encodingOptions(), '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-    '-af', `afade=t=in:d=1,afade=t=out:st=${Math.max(0, duration - 1.5)}:d=1.5`,
-    '-t', String(duration), output,
-  ], signal);
+  const segments:string[]=[];
   let rendered = 0;
-  try {
-    for (let index = 0; index < scenes.length; index += 1) {
+  for (let index = 0; index < scenes.length; index += 1) {
       const scene = scenes[index];
+      const segment=path.join(temporary,`promo-scene-${index}.mp4`);
+      const job=encoder(['-f','image2pipe','-vcodec','mjpeg','-framerate',String(FPS),'-i','pipe:0','-an',...encodingOptions(),'-t',String(scene.frames/FPS),segment],signal);
+      try{
       for (let frame = 0; frame < scene.frames; frame += 1) {
         aborted(signal);
         if (job.process.exitCode !== null || job.process.signalCode !== null) { await job.done; throw new Error('Video encoder stopped.'); }
@@ -173,14 +168,13 @@ async function renderPromo(
         rendered += 1;
         if (rendered % 15 === 0 || rendered === totalFrames) update(rendered / totalFrames, `Animating promo scene ${index + 1} of ${scenes.length} (${Math.round(rendered / totalFrames * 100)}%)`);
       }
-    }
-    job.process.stdin?.end();
-    await job.done;
-  } catch (error) {
-    job.stop();
-    await job.done.catch(() => {});
-    throw error;
+      job.process.stdin?.end();await job.done;
+      }catch(error){job.stop();await job.done.catch(()=>{});throw error;}
+      segments.push(segment);
   }
+  aborted(signal);
+  const {filters,label}=transitionFilter(scenes,FPS);
+  await runEncoder(['-filter_complex_threads','2',...segments.flatMap(file=>['-i',file]),'-f','lavfi','-i',soundtrack(duration),'-filter_complex',filters.join(';'),'-map',`[${label}]`,'-map',`${segments.length}:a:0`,...encodingOptions(),'-c:a','aac','-b:a','128k','-ac','2','-af',`afade=t=in:d=1,afade=t=out:st=${Math.max(0,duration-1.5)}:d=1.5`,'-t',String(duration),output],signal);
   return output;
 }
 
@@ -190,9 +184,10 @@ export async function renderVideos(project: Project, directory: string, kinds: O
   if (!selected.length || selected.some(kind => kind !== 'demo' && kind !== 'promo')) throw new Error('Select demo, promo, or both video outputs.');
   aborted(options.signal);
   if (!ffmpegAvailable()) throw new Error('FFmpeg is unavailable. Install dependencies or set FFMPEG_PATH to a local executable.');
-  const scenes = timeline(project.scenes);
+  const independent=Boolean(project.filmPlans);
+  const timelines=new Map(selected.map(kind=>[kind,renderTimeline(project.filmPlans?.[kind]?.scenes??project.scenes)]));
+  const legacyScenes=timelines.get(selected[0])!;
   const initialSize = outputDimensions(project, selected[0]);
-  const duration = scenes.reduce((sum, scene) => sum + scene.duration, 0);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const renderDirectory = await realpath(directory);
   if (activeDirectories.has(renderDirectory)) throw new Error('This project is already rendering videos.');
@@ -206,25 +201,12 @@ export async function renderVideos(project: Project, directory: string, kinds: O
   try {
     options.onProgress?.(0, 'Preparing local video assets');
     const settings = { ...DEFAULT_RENDER_SETTINGS, ...project.renderSettings };
-    const totalFrames = scenes.reduce((sum, scene) => sum + scene.frames, 0);
     const voiceOptions={engine:settings.narrationEngine,voice:settings.narrationVoice};
-    const preservedNarrated=project.outputs.some(output=>!selected.includes(output.kind)&&output.narrated);
-    const reusable=settings.narration!==false?await readPreparedNarration(scenes,voiceOptions,directory,temporary):undefined;
+    const preservedNarrated=!independent&&project.outputs.some(output=>!selected.includes(output.kind)&&output.narrated);
+    const reusable=!independent&&settings.narration!==false?await readPreparedNarration(legacyScenes,voiceOptions,directory,temporary):undefined;
     if(preservedNarrated&&(!reusable||settings.narration===false))throw new Error('Render both films to update the shared voice and captions together.');
     if(reusable)options.onProgress?.(0,'Reusing the reviewed narration and word timing');
-    const narration=settings.narration!==false?reusable||await prepareNarration(scenes,temporary,runEncoder,options.signal,voiceOptions):undefined;
-    const cues = narration?.cues||subtitleCues(scenes);
-    const stateAt = (index: number, progress: number, totalFrame: number): FilmState => {
-      const scene = scenes[index];
-      const time = (totalFrame + 0.5) / FPS;
-      return {
-        name: safeText(project.brief.name, 80), title: safeText(scene.title, 160), caption: safeText(scene.caption, 360),
-        feature: safeText(scene.feature || `Chapter ${String(index + 1).padStart(2, '0')}`, 100), url: humanUrl(project.brief.url),
-        scene: index, scenes: scenes.length, progress, totalProgress: (totalFrame + 0.5) / totalFrames, time, duration:scene.duration,
-        motion: settings.motion, focus: scene.focus, focusArea: scene.focusArea, focusRevealAt:scene.focusRevealAt, visualModel: scene.visualModel,
-        ...(settings.subtitles ? subtitleAt(cues, time) : { subtitle: '', subtitleWord: -1 }),
-      };
-    };
+    const legacyNarration=!independent&&settings.narration!==false?reusable||await prepareNarration(legacyScenes,temporary,runEncoder,options.signal,voiceOptions):undefined;
     browser = await chromium.launch({ headless: true });
     abortBrowser = () => { void browser?.close().catch(() => {}); };
     options.signal?.addEventListener('abort', abortBrowser, { once: true });
@@ -238,23 +220,32 @@ export async function renderVideos(project: Project, directory: string, kinds: O
     const finished: { temporary: string; output: string }[] = [];
     for (let index = 0; index < selected.length; index += 1) {
       const kind = selected[index];
+      const scenes=timelines.get(kind)!,totalFrames=scenes.reduce((sum,scene)=>sum+scene.frames,0),duration=totalFrames/FPS;
+      const work=path.join(temporary,kind);await mkdir(work);
+      const reused=independent&&settings.narration!==false?await readPreparedNarration(scenes,voiceOptions,directory,work,kind):undefined;
+      const narration=independent?(settings.narration!==false?reused||await prepareNarration(scenes,work,runEncoder,options.signal,voiceOptions):undefined):legacyNarration;
+      const cues=narration?.cues||subtitleCues(scenes);
+      const stateAt=(sceneIndex:number,progress:number,totalFrame:number):FilmState=>{
+        const scene=scenes[sceneIndex],time=(totalFrame+.5)/FPS;
+        return {name:safeText(project.brief.name,80),title:safeText(scene.title,160),caption:safeText(scene.caption,360),feature:safeText(scene.feature||`Chapter ${String(sceneIndex+1).padStart(2,'0')}`,100),url:humanUrl(project.brief.url),scene:sceneIndex,scenes:scenes.length,progress,totalProgress:(totalFrame+.5)/totalFrames,time,duration:scene.duration,motion:settings.motion,focus:scene.focus,focusArea:scene.focusArea,focusRevealAt:scene.focusRevealAt,camera:scene.camera,transition:scene.transition,externalTransitions:true,visualModel:scene.visualModel,...(settings.subtitles?subtitleAt(cues,time):{subtitle:'',subtitleWord:-1})};
+      };
       const {width,height}=outputDimensions(project,kind);
       await page.setViewportSize({width,height});
       const update = (progress: number, message: string) => options.onProgress?.(Math.min(99, Math.round((index + progress) / selected.length * 99)), message);
       let file = kind === 'demo'
-        ? await renderDynamicDemo({ project, directory, temporary, scenes, page, width, height, fps: FPS,
+        ? await renderDynamicDemo({ project, directory, temporary:work, scenes, page, width, height, fps: FPS,
           recording: await containedFile(directory, project.recording || ''), update, signal: options.signal, stateAt,
           encoder, runEncoder, encodingOptions, soundtrack, theme:resolveFilmTheme(project),fontCss })
-        : await renderPromo(project, temporary, scenes, stateAt, page, width, height, update, options.signal,fontCss);
+        : await renderPromo(project, work, scenes, stateAt, page, width, height, update, options.signal,fontCss);
       aborted(options.signal);
       if(narration){
-        const narrated=path.join(temporary,`${kind}-narrated.mp4`);
+        const narrated=path.join(work,`${kind}-narrated.mp4`);
         await runEncoder(['-i',file,'-i',narration.file,'-f','lavfi','-i',soundtrack(duration),'-filter_complex',`[2:a]volume=0.18,afade=t=in:d=0.7,afade=t=out:st=${Math.max(0,duration-1)}:d=1[music];[1:a][music]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[audio]`,'-map','0:v:0','-map','[audio]','-c:v','copy','-c:a','aac','-b:a','192k','-ac','2','-t',String(duration),'-movflags','+faststart',narrated],options.signal);
         file=narrated;
       }
       const relative = `${kind}.mp4`;
       const poster = `${kind}-poster.jpg`;
-      const posterFile = path.join(temporary, poster);
+      const posterFile = path.join(work, poster);
       const posterTime = kind==='promo'&&scenes.length>1 ? scenes[0].duration+scenes[1].duration/2 : Math.min(3,duration/2);
       await runEncoder([
         '-ss', String(posterTime), '-i', file,
@@ -264,11 +255,18 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       finished.push({ temporary: file, output: path.join(directory, relative) });
       finished.push({ temporary: posterFile, output: path.join(directory, poster) });
       outputs.push({ kind, file: relative, poster, width, height, fps: FPS, duration, narrated:!!narration, revision:randomUUID() });
+      if(independent){
+        await writeNarration(work,scenes,cues);
+        const assets=['narration.srt','narration.txt','captions.srt','captions.vtt',...(narration?['narration.wav','narration-timing.json']:[])];
+        finished.push(...assets.map(file=>({temporary:path.join(work,file),output:path.join(directory,`${kind}-${file}`)})));
+      }
     }
     // Publish only after every requested encode succeeds, preserving previous outputs on failure.
-    await writeNarration(temporary, scenes,cues);
-    finished.push(...['narration.srt', 'narration.txt', 'captions.srt', 'captions.vtt'].map(file => ({ temporary: path.join(temporary, file), output: path.join(directory, file) })));
-    if(narration)finished.push(...['narration.wav','narration-timing.json'].map(file=>({temporary:path.join(temporary,file),output:path.join(directory,file)})));
+    if(!independent){
+      await writeNarration(temporary,legacyScenes,legacyNarration?.cues||subtitleCues(legacyScenes));
+      finished.push(...['narration.srt', 'narration.txt', 'captions.srt', 'captions.vtt'].map(file => ({ temporary: path.join(temporary, file), output: path.join(directory, file) })));
+      if(legacyNarration)finished.push(...['narration.wav','narration-timing.json'].map(file=>({temporary:path.join(temporary,file),output:path.join(directory,file)})));
+    }
     for (const item of finished) await rename(item.temporary, item.output);
     options.onProgress?.(100, 'Videos ready');
     return outputs;

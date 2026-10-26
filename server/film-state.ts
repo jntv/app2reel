@@ -1,4 +1,4 @@
-import type { PrivacyMask, ProductVisualModel } from '../shared/types.js';
+import type { EditCamera, EditTransition, PrivacyMask, ProductVisualModel } from '../shared/types.js';
 export interface FilmState {
   name: string;
   title: string;
@@ -17,6 +17,9 @@ export interface FilmState {
   focus?: { x: number; y: number; zoom: number };
   focusArea?: PrivacyMask;
   focusRevealAt?: number;
+  camera?: EditCamera;
+  transition?: EditTransition;
+  externalTransitions?: boolean;
   visualModel?: ProductVisualModel;
   cursor?: { x: number; y: number; click?: boolean };
 }

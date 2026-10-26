@@ -4,7 +4,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { Store, briefSchema, sceneSchema, renderSettingsSchema, productThemeSchema } from './store.js';
+import { Store, briefSchema, sceneSchema, filmPlansSchema, renderSettingsSchema, productThemeSchema } from './store.js';
 import { LocalAI } from './ai.js';
 import { Pipeline } from './pipeline.js';
 import { browserAvailable, clearSessions, completeLogin, discardSession, loginStatus, openLogin } from './browser.js';
@@ -13,6 +13,7 @@ import { fixtureHTML } from './fixture.js';
 import { narrationEngine } from './narration.js';
 import { naturalVoiceReady } from './local-voice.js';
 import { registerNarrationRoutes } from './narration-api.js';
+import {syncReviewedSources} from './edit-plan.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const port=Number(process.env.PORT||4310);
@@ -50,23 +51,45 @@ app.get('/api/projects/:id',asyncRoute(async(req,res)=>res.json(store.get(String
 app.post('/api/projects/:id/design',asyncRoute(async(req,res)=>{
   z.object({}).strict().parse(req.body);res.json(await pipeline.refreshDesign(store.get(String(req.params.id))));
 }));
+app.post('/api/projects/:id/plan',asyncRoute(async(req,res)=>{
+  const body=z.object({demoDuration:z.number().int().min(10).max(180).default(90),promoDuration:z.number().int().min(10).max(90).default(45),notes:z.string().trim().max(2000).default('')}).strict().parse(req.body);
+  const p=store.get(String(req.params.id));await pipeline.plan(p,{demo:body.demoDuration,promo:body.promoDuration},body.notes);res.status(202).json(p);
+}));
 app.put('/api/projects/:id',asyncRoute(async(req,res)=>{
   pipeline.assertIdle();const p=store.get(String(req.params.id));
-  const patch=z.object({brief:briefSchema.partial().optional(),scenes:z.array(sceneSchema).min(1).max(12).optional(),renderSettings:renderSettingsSchema.optional(),productTheme:productThemeSchema.optional()}).strict().parse(req.body);
+  const patch=z.object({brief:briefSchema.partial().optional(),scenes:z.array(sceneSchema).min(1).max(20).optional(),filmPlans:filmPlansSchema.optional(),renderSettings:renderSettingsSchema.optional(),productTheme:productThemeSchema.optional()}).strict().parse(req.body);
+  if(patch.scenes&&patch.filmPlans)throw new Error('Save either the shared storyboard or the independent film plans in one request.');
   if(patch.productTheme&&new URL(patch.productTheme.sourceUrl).origin!==new URL(patch.brief?.url||p.brief.url).origin)throw new Error('The product theme must come from this product URL.');
   if(patch.brief){
     if(patch.brief.sample!==undefined&&patch.brief.sample!==p.brief.sample)throw new Error('Sample mode cannot be changed.');
     if(p.brief.sample&&patch.brief.url&&patch.brief.url!==p.brief.url)throw new Error('Create a new project to explore another URL.');
-    const previous=JSON.stringify(p.brief);p.brief=briefSchema.parse({...p.brief,...patch.brief});
-    if(previous!==JSON.stringify(p.brief)){await discardSession(p.id);p.stage='draft';p.error=undefined;p.scenes=[];p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.cursorTrack=undefined;p.productTheme=undefined;p.message='Brief updated. Explore again to record the updated product.';}
+    const captureBrief=({duration:_,promoDuration:__,resolution:___,brandColor:____,...capture}:typeof p.brief)=>capture;
+    const previous=JSON.stringify(captureBrief(p.brief)),previousRender=JSON.stringify([p.brief.resolution,p.brief.brandColor]);p.brief=briefSchema.parse({...p.brief,...patch.brief});
+    if(previous!==JSON.stringify(captureBrief(p.brief))){await discardSession(p.id);p.stage='draft';p.error=undefined;p.scenes=[];p.filmPlans=undefined;p.editSources=undefined;p.shots=[];p.findings=[];p.sources=[];p.outputs=[];p.recording=undefined;p.cursorTrack=undefined;p.productTheme=undefined;p.message='Brief updated. Explore again to record the updated product.';}
+    else if(previousRender!==JSON.stringify([p.brief.resolution,p.brief.brandColor])){p.outputs=[];p.error=undefined;if(p.scenes.length)p.stage='review';p.message='Output settings saved. Render again to apply the resolution and color.';}
   }
-  if(patch.scenes){
-    if(patch.scenes.reduce((a,s)=>a+s.duration,0)>90)throw new Error('Total film duration must be 90 seconds or less.');
+  const validateAssets=(scenes:typeof p.scenes)=>{
+    if(scenes.reduce((a,s)=>a+Math.round(s.duration*30),0)>180*30)throw new Error('A film can be at most 180 seconds.');
     const permitted=new Set(p.shots.map(s=>s.screenshot));
-    for(const s of patch.scenes){if(s.screenshot&&!permitted.has(s.screenshot))throw new Error('Storyboard can only use captured screenshots.');if(s.recordingStart!==undefined&&s.recordingEnd!==undefined&&s.recordingEnd<=s.recordingStart)throw new Error('Clip end must be after its start.');}
+    for(const s of scenes){if(s.screenshot&&!permitted.has(s.screenshot))throw new Error('Storyboard can only use captured screenshots.');if(s.recordingStart!==undefined&&s.recordingEnd!==undefined&&s.recordingEnd<=s.recordingStart)throw new Error('Clip end must be after its start.');}
+  };
+  if(patch.scenes){
+    validateAssets(patch.scenes);
+    if(p.editSources?.length)p.editSources=syncReviewedSources(p.editSources,p.scenes,patch.scenes);
     const promoStory=(scenes:typeof p.scenes)=>JSON.stringify(scenes.map(s=>[s.title,s.caption,s.narration,s.duration,s.feature||'',s.visualModel]));
     const samePromo=promoStory(p.scenes)===promoStory(patch.scenes);
-    p.scenes=patch.scenes;p.outputs=samePromo?p.outputs.filter(output=>output.kind==='promo'):[];p.stage='review';
+    p.scenes=patch.scenes;
+    if(p.filmPlans?.demo){p.filmPlans.demo={...p.filmPlans.demo,scenes:patch.scenes,targetDuration:patch.scenes.reduce((sum,s)=>sum+s.duration,0)};p.outputs=p.outputs.filter(output=>output.kind==='promo');}
+    else p.outputs=samePromo?p.outputs.filter(output=>output.kind==='promo'):[];
+    p.stage='review';
+  }
+  if(patch.filmPlans){
+    for(const [kind,plan] of Object.entries(patch.filmPlans))if(plan){validateAssets(plan.scenes);if(JSON.stringify(p.filmPlans?.[kind as 'demo'|'promo'])!==JSON.stringify(plan))p.outputs=p.outputs.filter(output=>output.kind!==kind);}
+    if(!p.editSources?.length)p.editSources=structuredClone(p.scenes);
+    // Migrating a legacy shared clock requires fresh per-film sidecars for both outputs.
+    if(!p.filmPlans){const targetDuration=p.scenes.reduce((sum,scene)=>sum+Math.round(scene.duration*30),0)/30;p.filmPlans={demo:{scenes:structuredClone(p.scenes),targetDuration},promo:{scenes:structuredClone(p.scenes),targetDuration}};p.outputs=[];}
+    for(const [kind,plan] of Object.entries(patch.filmPlans))if(plan)p.editSources=syncReviewedSources(p.editSources,p.filmPlans?.[kind as 'demo'|'promo']?.scenes||[],plan.scenes);
+    p.filmPlans={...p.filmPlans,...patch.filmPlans};if(p.filmPlans.demo)p.scenes=p.filmPlans.demo.scenes;p.stage='review';p.error=undefined;
   }
   if(patch.renderSettings){
     p.renderSettings=patch.renderSettings;p.outputs=[];p.error=undefined;
@@ -76,7 +99,7 @@ app.put('/api/projects/:id',asyncRoute(async(req,res)=>{
   if(patch.productTheme){
     p.productTheme=patch.productTheme;p.outputs=[];p.error=undefined;if(p.scenes.length)p.stage='review';p.message='Product design saved. Render the films to apply it.';
   }
-  if(p.scenes.length&&(patch.scenes||patch.renderSettings||patch.productTheme))await pipeline.exportPlan(p);
+  if(p.scenes.length&&(patch.scenes||patch.filmPlans||patch.renderSettings||patch.productTheme))await pipeline.exportPlan(p);
   await store.save(p);res.json(p);
 }));
 app.post('/api/projects/:id/explore',asyncRoute(async(req,res)=>{
@@ -109,7 +132,11 @@ app.get('/artifacts/:id/:filename',(req,res,next)=>{
   try{
     const id=String(req.params.id),filename=String(req.params.filename);const p=store.get(id);
     if(!/^[a-zA-Z0-9._-]+\.(png|jpg|mp4|webm|wav|json|txt|srt|vtt)$/.test(filename)||filename==='project.json')return res.status(404).end();
-    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt','captions.vtt']:[]),...(p.outputs.some(output=>output.narrated)?['narration.wav','narration-timing.json']:[])]);
+    const perFilm=Object.keys(p.filmPlans||{}).flatMap(kind=>[
+      `${kind}-narration.txt`,`${kind}-narration.srt`,`${kind}-captions.srt`,`${kind}-captions.vtt`,
+      ...(p.outputs.some(output=>output.kind===kind&&output.narrated)?[`${kind}-narration.wav`,`${kind}-narration-timing.json`]:[])
+    ]);
+    const available=new Set([...p.shots.map(s=>s.screenshot),...p.outputs.flatMap(o=>o.poster?[o.file,o.poster]:[o.file]),...(p.recording?[p.recording]:[]),...(p.scenes.length?['storyboard.json','research.json','narration.txt','narration.srt','captions.srt','captions.vtt']:[]),...(p.outputs.some(output=>output.narrated)?['narration.wav','narration-timing.json']:[]),...perFilm]);
     if(!available.has(filename))return res.status(404).end();
     res.setHeader('Cache-Control','no-store');res.sendFile(path.join(store.dir(id),filename),{dotfiles:'allow'},error=>{if(error&&!res.headersSent&&!res.destroyed)next(error);});
   }catch(error){next(error);}

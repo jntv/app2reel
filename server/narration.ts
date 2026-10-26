@@ -4,7 +4,7 @@ import { stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Scene } from '../shared/types.js';
 import { subtitleCues, type SubtitleCue } from './subtitles.js';
-import { synthesizeNaturalVoice } from './local-voice.js';
+import { naturalVoiceIdentity, synthesizeNaturalVoice } from './local-voice.js';
 import { alignVoiceWords } from './voice-alignment.js';
 import { narrationFingerprint } from './narration-cache.js';
 
@@ -90,6 +90,7 @@ export async function prepareNarration(scenes:readonly Scene[],directory:string,
   const file=path.join(directory,'narration.wav');
   await runEncoder(['-f','concat','-safe','1','-i',list,'-ar','48000','-ac','1','-c:a','pcm_s16le',file],signal);
   const voice=natural?options.voice||'melo_india':engine!.voice;
-  await writeFile(path.join(directory,'narration-timing.json'),JSON.stringify({fingerprint:narrationFingerprint(scenes,{engine:natural?'natural':'system',voice:options.voice}),voice,provider:natural?voice==='melo_india'?'MeloTTS ONNX':'Kokoro ONNX':engine!.provider,alignments,cues},null,2));
+  const identity=natural?naturalVoiceIdentity(voice):{provider:engine!.provider};
+  await writeFile(path.join(directory,'narration-timing.json'),JSON.stringify({fingerprint:narrationFingerprint(scenes,{engine:natural?'natural':'system',voice:options.voice}),voice,...identity,alignments,cues},null,2));
   return {file,cues,voice};
 }

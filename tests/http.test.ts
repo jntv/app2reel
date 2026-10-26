@@ -14,11 +14,14 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   const store=new Store(data);await store.init();
   const p=await store.create(briefSchema.parse({name:'Fixture',url:'https://example.com',description:'An integration test product',purpose:'Verify media access',actors:'Test users',features:['View products']}));
   p.stage='complete';p.scenes=[{id:'scene-1',title:'A scene',caption:'A caption',narration:'Words',duration:3}];
+  p.filmPlans={demo:{scenes:structuredClone(p.scenes),targetDuration:3},promo:{scenes:[{...p.scenes[0],narration:'A distinct motion film script.'}],targetDuration:3}};
   p.outputs=[{kind:'demo',file:'demo.mp4',poster:'demo-poster.jpg',width:1280,height:720,fps:30,duration:3},{kind:'promo',file:'promo.mp4',width:1280,height:720,fps:30,duration:3,narrated:true}];await store.save(p);
   await writeFile(path.join(store.dir(p.id),'demo.mp4'),Buffer.from('0123456789'));
   await writeFile(path.join(store.dir(p.id),'demo-poster.jpg'),Buffer.from('fixture-poster'));
   await writeFile(path.join(store.dir(p.id),'promo.mp4'),Buffer.from('completed graphics-only promo'));
   await writeFile(path.join(store.dir(p.id),'captions.vtt'),'WEBVTT\n\n00:00:00.300 --> 00:00:01.800\nVoice timed words\n');
+  await writeFile(path.join(store.dir(p.id),'promo-captions.vtt'),'WEBVTT\n\n00:00:00.300 --> 00:00:02.800\nA distinct motion film script.\n');
+  await writeFile(path.join(store.dir(p.id),'promo-narration.wav'),'fixture-promo-voice');
   await writeFile(path.join(store.dir(p.id),'stale.mp4'),Buffer.from('old export'));
   const probe=createServer();await new Promise<void>(resolve=>probe.listen(0,'127.0.0.1',resolve));
   const port=(probe.address() as {port:number}).port;await new Promise<void>(resolve=>probe.close(()=>resolve()));
@@ -35,6 +38,9 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   assert.equal(poster.status,200);assert.equal(poster.headers.get('content-type'),'image/jpeg');assert.equal(await poster.text(),'fixture-poster');
   assert.equal((await fetch(`${base}/artifacts/${p.id}/stale.mp4`)).status,404);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/project.json`)).status,404);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/promo-captions.vtt`)).status,200);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/promo-narration.wav`)).status,200);
+  assert.equal((await fetch(`${base}/artifacts/${p.id}/demo-narration.wav`)).status,404);
   const cross=await fetch(base+'/api/sample',{method:'POST',headers:{'content-type':'application/json',origin:'https://hostile.example'},body:'{}'});assert.equal(cross.status,403);
   const mediaType=await fetch(base+'/api/sample',{method:'POST',headers:{'content-type':'text/plain'},body:'{}'});assert.equal(mediaType.status,415);
   // Fetch normalizes Host on recent Node versions; use a raw HTTP request for the rebinding case.
@@ -51,6 +57,16 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   assert.equal((await fetch(`${base}/artifacts/${p.id}/demo.mp4`)).status,404);
   assert.equal((await fetch(`${base}/artifacts/${p.id}/promo.mp4`)).status,200);
   assert.match(await (await fetch(`${base}/artifacts/${p.id}/captions.vtt`)).text(),/00:00:00.300 --> 00:00:01.800/,'Focus-only edits must preserve the completed promo’s real spoken timing.');
+  const newDemo={scenes:[{...p.scenes[0],narration:'A changed walkthrough script.',duration:5,camera:{contextHold:1,moveDuration:1.5,releaseDuration:.5},transition:{type:'dissolve',duration:.7}}],targetDuration:5};
+  const edited=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({filmPlans:{demo:newDemo}})});
+  assert.equal(edited.status,200);const editedProject=await edited.json();assert.equal(editedProject.scenes[0].duration,5);
+  assert.deepEqual(editedProject.outputs.map((output:{kind:string})=>output.kind),['promo'],'A changed demo script must preserve the independent narrated promo.');
+  assert.match(await (await fetch(`${base}/artifacts/${p.id}/promo-captions.vtt`)).text(),/distinct motion film/);
+  const inconsistent=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({filmPlans:{demo:{...newDemo,targetDuration:8}}})});assert.equal(inconsistent.status,400);
+  const lengthOnly=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({brief:{duration:110,promoDuration:45}})});
+  assert.equal(lengthOnly.status,200);assert.equal((await lengthOnly.json()).scenes[0].duration,5,'Saving film length targets must retain captured product evidence.');
+  const resized=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({brief:{resolution:'720p'}})});
+  assert.equal(resized.status,200);const resizedProject=await resized.json();assert.equal(resizedProject.scenes.length,1);assert.deepEqual(resizedProject.outputs,[],'Resolution changes retain the reviewed scenes but invalidate exports of the old size.');
   const styled=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({renderSettings:{motion:'subtle',subtitles:false,cursorHighlights:false}})});
   assert.equal(styled.status,200);const styledProject=await styled.json();
   assert.deepEqual(styledProject.renderSettings,{motion:'subtle',subtitles:false,cursorHighlights:false});

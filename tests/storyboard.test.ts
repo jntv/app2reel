@@ -124,6 +124,10 @@ test('a verbose model plan gets exactly one bounded correction attempt before re
           return { scenes: [planned(0, 10, plans === 2 && retrySucceeds ? 'See your workspace.' : Array(30).fill('word').join(' '))] };
         }
         if (prompt.startsWith('You are directing a smooth product demonstration')) { directed++; return { focusArea: { x: .3, y: .2, width: .4, height: .3 }, focus: { x: .5, y: .35, zoom: 1.4 } }; }
+        if (prompt.startsWith('You are the editor of two different product films')) {
+          const edit={sourceIndex:0,framing:'detail',title:'Review the workspace',caption:'Your workspace',narration:'See your workspace.',duration:10,camera:{contextHold:1,moveDuration:1.5,releaseDuration:0},transition:{type:'cut',duration:0}};
+          return {demo:{rationale:'Teach the view.',scenes:[edit]},promo:{rationale:'Introduce the product.',scenes:[{...edit,narration:'Meet your workspace.'}]}};
+        }
         throw new Error('Unexpected inference request.');
       } } as unknown as LocalAI;
       const pipeline = new Pipeline(store, ai);

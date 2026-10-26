@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {chmod, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {tmpdir, release} from 'node:os';
 import path from 'node:path';
-import {localVoiceStatus, naturalVoiceReady, synthesizeNaturalVoice, voiceDirectory, voicePython} from '../server/local-voice.js';
+import {localVoiceStatus, naturalVoiceIdentity, naturalVoiceReady, startVoiceSetup, synthesizeNaturalVoice, voiceDirectory, voicePython} from '../server/local-voice.js';
 
 type FakeMode = 'valid'|'wrong-file'|'wrong-count'|'wrong-order'|'invalid-json'|'invalid-schema'|'failed'|'wait';
+const supportsQwen=process.platform==='darwin'&&process.arch==='arm64'&&Number(release().split('.')[0])>=23;
 
 async function fakeRuntime(run: (directory: string, install: (mode?: FakeMode) => Promise<void>) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(path.join(tmpdir(), 'capture-voice-bridge-'));
@@ -69,7 +71,7 @@ test('local voice bridge works without a model download', {skip: process.platfor
       assert.equal(ready.state, 'ready');
       assert.equal(ready.naturalReady, true);
       assert.equal(ready.systemReady, false);
-      assert.deepEqual(ready.voices.map(voice => voice.id), ['melo_india', 'af_heart', 'am_michael']);
+      assert.deepEqual(ready.voices.map(voice => voice.id), ['melo_india', 'af_heart', 'am_michael', 'qwen_indian_male', 'qwen_indian_female']);
       for (const file of ['.installed.json', 'models/kokoro-v1.0.onnx', 'models/voices-v1.0.bin', path.relative(directory, voicePython(directory))]) {
         await rm(path.join(directory, file));
         assert.equal(naturalVoiceReady('af_heart'), false, `Missing ${file} must disable natural speech.`);
@@ -173,4 +175,47 @@ test('local voice bridge works without a model download', {skip: process.platfor
       }
     });
   });
+});
+
+test('designed voices bind the exact reference and recipe while preserving legacy identities',()=>{
+  assert.deepEqual(naturalVoiceIdentity('melo_india'),{provider:'MeloTTS ONNX'});
+  assert.deepEqual(naturalVoiceIdentity('af_heart'),{provider:'Kokoro ONNX'});
+  assert.deepEqual(naturalVoiceIdentity('am_michael'),{provider:'Kokoro ONNX'});
+  const recipe=JSON.parse(readFileSync('assets/voices/qwen-recipes.json','utf8'));
+  const digests=[];
+  for(const voice of ['qwen_indian_male','qwen_indian_female']){
+    const reference=recipe.voices[voice],identity=naturalVoiceIdentity(voice);
+    assert.equal(identity.provider,'Qwen3-TTS MLX');assert.match(identity.recipe!,/^[a-f0-9]{64}$/);
+    assert.equal(identity.recipe,naturalVoiceIdentity(voice).recipe);
+    assert.equal(createHash('sha256').update(readFileSync(path.join('assets/voices',reference.reference))).digest('hex'),reference.sha256);
+    assert.equal(identity.recipe,createHash('sha256').update(JSON.stringify({version:recipe.version,model:recipe.model.repository,revision:recipe.model.revision,reference:reference.sha256,transcript:reference.transcript,generation:recipe.generation})).digest('hex'));
+    digests.push(identity.recipe);
+  }
+  assert.notEqual(digests[0],digests[1]);
+  assert.match(voicePython('/tmp/local-runtime','qwen_indian_male'),/qwen-venv/);
+  assert.match(voicePython('/tmp/local-runtime','melo_india'),/[/\\]venv[/\\]/);
+});
+
+test('designed voice readiness requires its separate environment and pinned model revision',{skip:!supportsQwen,concurrency:false},async()=>{
+  await fakeRuntime(async(directory,install)=>{
+    await install();
+    assert.equal(naturalVoiceReady('qwen_indian_male'),false);
+    const recipe=JSON.parse(await readFile('assets/voices/qwen-recipes.json','utf8'));
+    for(const asset of recipe.model.assets){const file=path.join(directory,'models',recipe.model.directory,asset.name);await mkdir(path.dirname(file),{recursive:true});await writeFile(file,'fixture');}
+    await writeFile(path.join(directory,'.qwen-installed.json'),JSON.stringify({modelRevision:recipe.model.revision}));
+    assert.equal(naturalVoiceReady('qwen_indian_male'),false,'Legacy environment must not masquerade as a Qwen install.');
+    const python=voicePython(directory,'qwen_indian_male');await mkdir(path.dirname(python),{recursive:true});
+    await writeFile(python,await readFile(voicePython(directory)));await chmod(python,0o700);
+    assert.equal(naturalVoiceReady('qwen_indian_male'),true);assert.equal(naturalVoiceReady('qwen_indian_female'),true);
+    const result=await synthesizeNaturalVoice(batch(directory),'qwen_indian_male');assert.equal(result.length,1);
+    const received=JSON.parse(await readFile(path.join(directory,'received.json'),'utf8'));assert.equal(received.request.voice,'qwen_indian_male');assert.deepEqual(received.offline,['1','1']);
+    await writeFile(path.join(directory,'.qwen-installed.json'),JSON.stringify({modelRevision:'unreviewed-model'}));
+    assert.equal(naturalVoiceReady('qwen_indian_male'),false);
+  });
+});
+
+test('unsupported computers get an explicit designed-voice platform error',{skip:supportsQwen},async()=>{
+  assert.equal(naturalVoiceReady('qwen_indian_male'),false);
+  assert.throws(()=>startVoiceSetup(false,'qwen_indian_male'),/Apple Silicon Mac/);
+  await assert.rejects(synthesizeNaturalVoice([{text:'Test.',file:'/tmp/test.wav'}],'qwen_indian_female'),/Apple Silicon Mac/);
 });

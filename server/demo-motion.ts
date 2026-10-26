@@ -1,4 +1,4 @@
-import type { PrivacyMask } from '../shared/types.js';
+import type { EditTransition, PrivacyMask } from '../shared/types.js';
 import type { FilmState } from './film-state.js';
 
 export interface DemoCamera { x: number; y: number; zoom: number }
@@ -41,7 +41,7 @@ export function attentionBounds(area: PrivacyMask, cursors: { x: number; y: numb
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-export interface CameraTiming { start: number; move: number; duration: number; targetZoom: number }
+export interface CameraTiming { start: number; move: number; duration: number; targetZoom: number; release: number; releaseStart: number }
 
 /** A held context followed by one settled, sustained detail shot, paced in seconds. */
 export function cameraTiming(state: FilmState, layout = demoLayout(1920, 1080), bounds?: PrivacyMask): CameraTiming {
@@ -56,11 +56,12 @@ export function cameraTiming(state: FilmState, layout = demoLayout(1920, 1080), 
   const limit = area ? Math.min(0.94 / Math.max(0.001, area.width * fit.sourceWidth), 0.88 / Math.max(0.001, area.height * fit.sourceHeight)) : 1.85;
   let targetZoom = Math.max(1, Math.min(clamp(authored.zoom, 1, 2.4), subtle ? 1.24 : overview ? 1.25 : detail ? 2.2 : 1.85, limit));
   const ready = Math.max(0, Math.min(duration, state.focusRevealAt ?? Math.min(0.72, duration * 0.14)));
-  const start = Math.min(duration, ready + (ready > 0 ? 0.08 : 0.22));
+  const start = state.camera ? Math.min(duration,Math.max(ready,clamp(state.camera.contextHold,0,duration))) : Math.min(duration, ready + (ready > 0 ? 0.08 : 0.22));
   const available = duration - start;
-  const move = Math.min(overview ? 1.65 : detail ? 1.0 : 1.2, Math.max(0.45, available * 0.45));
+  const move = state.camera ? Math.min(available,clamp(state.camera.moveDuration,.2,10)) : Math.min(overview ? 1.65 : detail ? 1.0 : 1.2, Math.max(0.45, available * 0.45));
+  const release=state.camera?Math.min(clamp(state.camera.releaseDuration,0,10),Math.max(0,available-move)):0;
   if (available < 0.7) targetZoom = 1;
-  return { start, move, duration, targetZoom };
+  return { start, move, duration, targetZoom, release, releaseStart:duration-release };
 }
 
 /** Pointer movement cannot perturb this editorial camera. */
@@ -69,19 +70,50 @@ export function cameraAt(state: FilmState, layout = demoLayout(1920, 1080), boun
   const area = bounds || state.focusArea;
   const subject = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : authored;
   const timing = cameraTiming(state, layout, bounds);
-  const amount = ease((clamp(state.progress) * timing.duration - timing.start) / timing.move);
+  const time=clamp(state.progress)*timing.duration;
+  const amount = ease((time-timing.start)/Math.max(.001,timing.move))*(timing.release?1-ease((time-timing.releaseStart)/timing.release):1);
   return { x: 0.5 + (clamp(subject.x) - 0.5) * amount, y: 0.5 + (clamp(subject.y) - 0.5) * amount, zoom: 1 + (timing.targetZoom - 1) * amount };
 }
 
 export function cameraKeys(state: FilmState, frames: number, layout: DemoLayout, bounds?: PrivacyMask): CameraKey[] {
   const timing = cameraTiming(state, layout, bounds);
   const keys = new Map<number, CameraKey>();
-  for (const time of [0, timing.start, Math.min(timing.duration, timing.start + timing.move), timing.duration]) {
+  for (const time of [0, timing.start, Math.min(timing.duration, timing.start + timing.move),timing.releaseStart, timing.duration]) {
     const progress = clamp(time / timing.duration);
     const frame = Math.round(progress * Math.max(0, frames - 1));
     keys.set(frame, { frame, ...cameraAt({ ...state, progress }, layout, bounds) });
   }
   return [...keys.values()];
+}
+
+/** Even frame counts keep both centered transition handles on exact frames. */
+export function transitionSchedule(scenes:readonly {frames:number;transition?:EditTransition}[],fps:number):{type:EditTransition['type'];duration:number;half:number}[]{
+  if(!Number.isInteger(fps)||fps<1||fps>60)throw new Error('Invalid film transition frame rate.');
+  return scenes.slice(0,-1).map((scene,index)=>{
+    const authored=scene.transition??{type:'dissolve' as const,duration:.6};
+    if(!['cut','dissolve','fade','slide'].includes(authored.type)||!Number.isFinite(authored.duration)||authored.duration<0||authored.duration>1.2)throw new Error('Invalid reviewed film transition.');
+    const maximum=2*Math.floor(Math.min(scene.frames,scenes[index+1].frames)/4);
+    const frames=authored.type==='cut'||!authored.duration?0:Math.min(maximum,Math.max(2,2*Math.round(authored.duration*fps/2)));
+    return {type:frames?authored.type:'cut',duration:frames/fps,half:frames/fps/2};
+  });
+}
+
+/** Center each outgoing edit on its original boundary, with no narration drift. */
+export function transitionFilter(scenes:readonly {frames:number;transition?:EditTransition}[],fps:number):{filters:string[];label:string}{
+  const transitions=transitionSchedule(scenes,fps);
+  const filters=scenes.map((_,index)=>`[${index}:v]fps=${fps},settb=AVTB,setpts=PTS-STARTPTS,tpad=start_mode=clone:start_duration=${transitions[index-1]?.half||0}:stop_mode=clone:stop_duration=${transitions[index]?.half||0}[clip${index}]`);
+  let label='clip0',elapsed=scenes[0].frames/fps;
+  for(let index=1;index<scenes.length;index++){
+    const transition=transitions[index-1],next=`join${index}`;
+    // xfade can emit an inclusive terminal frame. Bound every join so that
+    // rounding cannot accumulate into later editorial boundaries.
+    const frames=Math.round((elapsed+scenes[index].frames/fps+(transitions[index]?.half||0))*fps);
+    const finish=`trim=end_frame=${frames},setpts=PTS-STARTPTS[${next}]`;
+    if(transition.type==='cut')filters.push(`[${label}][clip${index}]concat=n=2:v=1:a=0,settb=AVTB,${finish}`);
+    else filters.push(`[${label}][clip${index}]xfade=transition=${transition.type==='fade'?'fadeblack':transition.type==='slide'?'smoothleft':'fade'}:duration=${transition.duration}:offset=${(elapsed-transition.half).toFixed(8)},${finish}`);
+    label=next;elapsed+=scenes[index].frames/fps;
+  }
+  return {filters,label};
 }
 
 export function cameraForFrame(keys: CameraKey[], frame: number): DemoCamera {

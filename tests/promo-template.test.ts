@@ -25,6 +25,27 @@ const setState = (page: import('playwright').Page, value: FilmState) => page.eva
   s => (window as unknown as { setFilmState(s: FilmState): Promise<void> }).setFilmState(s), value,
 );
 
+test('authored promo detail holds and releases in seconds without a second internal transition',async()=>{
+  const page=await browser.newPage({viewport:{width:720,height:1280}});
+  try{
+    await page.setContent(promoTemplate(720,1280,productTheme));
+    const authored:FilmState={...state,scene:1,scenes:3,duration:10,camera:{contextHold:2,moveDuration:2,releaseDuration:2},focusRevealAt:3,externalTransitions:true,transition:{type:'dissolve',duration:.6}};
+    const detail=async(second:number)=>{
+      await setState(page,{...authored,progress:second/10});
+      return Number(await page.locator('#stage').getAttribute('data-detail'));
+    };
+    assert.equal(await detail(2.5),0,'The product result must settle before its detail move.');
+    assert.equal(await detail(5),1);
+    assert.equal(await detail(8),1);
+    assert.ok((await detail(9))>.4&&(await detail(9))<.6);
+    assert.equal(await detail(10),0);
+    for(const progress of [.001,.999]){
+      await setState(page,{...authored,progress});
+      assert.equal(await page.locator('#wipe').evaluate(el=>(el as HTMLElement).style.transform),'translateY(100%)','External authored transitions replace the internal wipe.');
+    }
+  }finally{await page.close();}
+});
+
 test('promo is screenshot-free, offline and treats product copy as text', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const requests: string[] = [];
@@ -222,5 +243,16 @@ test('opening beats have reading holds and the final CTA waits until the final 1
     await setState(page, { ...state, scene: 4, scenes: 5, duration, progress: (duration - 1.3) / duration });
     assert.equal(await page.locator('#stage').getAttribute('data-phase'), 'close');
   }
+  await page.close();
+});
+
+test('a longer independently edited closing gives the invitation more than three readable seconds', async()=>{
+  const page=await browser.newPage({viewport:{width:720,height:1280}});
+  await page.setContent(promoTemplate(720,1280,productTheme));
+  await setState(page,{...state,scene:5,scenes:6,duration:9,externalTransitions:true,progress:5.4/9});
+  assert.equal(await page.locator('#stage').getAttribute('data-phase'),'list');
+  await setState(page,{...state,scene:5,scenes:6,duration:9,externalTransitions:true,progress:5.9/9});
+  assert.equal(await page.locator('#stage').getAttribute('data-phase'),'close');
+  assert.ok(await page.locator('#closing').isVisible());
   await page.close();
 });
