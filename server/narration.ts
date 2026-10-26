@@ -72,7 +72,10 @@ export async function prepareNarration(scenes:readonly Scene[],directory:string,
     const tempo=Math.max(1,rawDuration/available);
     // Avoid a rushed read; changing the reviewed script or scene duration is preferable.
     if(tempo>(natural?1.12:1.38))throw new Error(`Scene ${index+1} has too much narration for ${scene.duration} seconds. Shorten the script or increase its duration.`);
-    await runEncoder(['-f','s16le','-ar','48000','-ac','1','-i',pcm,'-af',`atempo=${tempo.toFixed(7)},loudnorm=I=-16:TP=-1.5:LRA=8,adelay=${Math.round(lead*1000)},apad,atrim=duration=${scene.duration}`,'-ar','48000','-ac','1','-c:a','pcm_s16le',output],signal);
+    // loudnorm may negotiate a 192 kHz filter clock. Return to the export rate
+    // before adding silence so a later resampler cannot shorten a scene's tail.
+    const samples=Math.round(scene.duration*48000);
+    await runEncoder(['-f','s16le','-ar','48000','-ac','1','-i',pcm,'-af',`atempo=${tempo.toFixed(7)},loudnorm=I=-16:TP=-1.5:LRA=8,aresample=48000:out_chlayout=mono,asetpts=N/SR/TB,adelay=${Math.round(lead*1000)},apad,atrim=end_sample=${samples}`,'-ar','48000','-ac','1','-c:a','pcm_s16le',output],signal);
     const result=naturalFiles.find(item=>item.file===speech);
     const alignment=result?alignVoiceWords(text,result.wordPhonemes,result.phonemes):undefined;
     const phrases=subtitleCues([scene]);const count=phrases.reduce((sum,cue)=>sum+cue.words.length,0);

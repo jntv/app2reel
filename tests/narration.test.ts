@@ -24,7 +24,7 @@ test('local narration produces audible PCM, fits the scene and exports word timi
     const narration=await prepareNarration([{id:'s1',title:'Appointments',caption:'',narration:'Keep your appointments in view.',duration:4}],dir,run);
     assert.ok((await stat(narration.file)).size>4*48000*2);
     const pcm=path.join(dir,'proof.pcm');await run(['-i',narration.file,'-f','s16le','-ar','48000','-ac','1',pcm]);
-    const bytes=await readFile(pcm);assert.ok(Math.abs(bytes.length/96000-4)<.01);
+    const bytes=await readFile(pcm);assert.equal(bytes.length,4*48000*2,'The prepared voice must retain the exact 48 kHz scene clock.');
     let energy=0;for(let i=0;i<bytes.length;i+=2)energy+=(bytes.readInt16LE(i)/32768)**2;
     assert.ok(Math.sqrt(energy/(bytes.length/2))>.02,'Narration must contain audible speech, not just a silent placeholder.');
     assert.ok(narration.cues[0].start>.1);assert.ok(narration.cues.at(-1)!.end<4);

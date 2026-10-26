@@ -106,10 +106,13 @@ export function transitionFilter(scenes:readonly {frames:number;transition?:Edit
   for(let index=1;index<scenes.length;index++){
     const transition=transitions[index-1],next=`join${index}`;
     // xfade can emit an inclusive terminal frame. Bound every join so that
-    // rounding cannot accumulate into later editorial boundaries.
+    // rounding cannot accumulate into later editorial boundaries. Rebuild PTS
+    // from the frame index so AVTB rounding cannot duplicate an encoded frame.
     const frames=Math.round((elapsed+scenes[index].frames/fps+(transitions[index]?.half||0))*fps);
-    const finish=`trim=end_frame=${frames},setpts=PTS-STARTPTS[${next}]`;
-    if(transition.type==='cut')filters.push(`[${label}][clip${index}]concat=n=2:v=1:a=0,settb=AVTB,${finish}`);
+    const finish=`trim=end_frame=${frames},setpts=N/(${fps}*TB)[${next}]`;
+    // concat declares an unknown output rate in FFmpeg 7. Restore CFR metadata
+    // before a later xfade while keeping the reviewed frame-count trim.
+    if(transition.type==='cut')filters.push(`[${label}][clip${index}]concat=n=2:v=1:a=0,fps=${fps},settb=AVTB,${finish}`);
     else filters.push(`[${label}][clip${index}]xfade=transition=${transition.type==='fade'?'fadeblack':transition.type==='slide'?'smoothleft':'fade'}:duration=${transition.duration}:offset=${(elapsed-transition.half).toFixed(8)},${finish}`);
     label=next;elapsed+=scenes[index].frames/fps;
   }
