@@ -37,6 +37,15 @@ export function subtitleAt(cues: readonly SubtitleCue[], time: number): { subtit
   return { subtitle: cue.text, subtitleWord: timed!==undefined?Math.max(0,timed):Math.min(cue.words.length - 1, Math.floor(progress * cue.words.length)) };
 }
 
+/** Fade phrase panels at their own boundaries; active-word changes stay immediate. */
+export function subtitleOpacityAt(cues:readonly SubtitleCue[],time:number):number {
+  const cue=cues.find(value=>time>=value.start&&time<value.end);
+  if(!cue)return 0;
+  const fade=Math.min(.11,(cue.end-cue.start)*.18);
+  const smooth=(value:number)=>{const t=Math.max(0,Math.min(1,value));return t*t*t*(t*(t*6-15)+10);};
+  return smooth((time-cue.start)/fade)*smooth((cue.end-time)/fade);
+}
+
 function timestamp(value: number, decimal: ','|'.'): string {
   const ms = Math.max(0, Math.round(value * 1000));
   return `${String(Math.floor(ms / 3600000)).padStart(2,'0')}:${String(Math.floor(ms / 60000) % 60).padStart(2,'0')}:${String(Math.floor(ms / 1000) % 60).padStart(2,'0')}${decimal}${String(ms % 1000).padStart(3,'0')}`;

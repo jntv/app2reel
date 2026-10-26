@@ -41,7 +41,7 @@ The demo composites real video with frame-driven motion artwork; it does not sub
 
 Camera focus and outlined regions remain editable. **Storyboard → Source edit** can retain up to six ordered source intervals per scene, cutting loading or waiting between a real action and its result. The render builds a temporary lossless edit and remaps pointer evidence to that same clock; raw footage stays intact.
 
-The camera holds context for broad views, then uses a selective push and sustained detail hold for smaller controls. Focus delay prevents a highlight appearing before its incoming view settles; it does not chase the pointer. Small active regions allow closer framing while larger regions limit zoom to preserve readable controls. The demo keeps editorial chrome out of the product window and uses compact caption panels.
+The camera holds context for broad views, then uses a selective push and sustained detail hold for smaller controls. Pan and zoom share a smoothly eased viewport transform, including near screen edges. For a page change, give the outgoing shot a release duration: it returns to context and settles before the dissolve begins. Strong close-ups benefit from a longer move and release. Focus delay prevents a highlight appearing before its incoming view settles; it does not chase the pointer. Small active regions allow closer framing while larger regions limit zoom to preserve readable controls. Focus boxes fade gently, labels keep one side of their region throughout the shot, and caption panels ease at phrase changes while word highlights follow speech.
 
 App2Reel records interaction/settled timestamps and distinguishes incoming actions from outgoing explorer intent. The planner orders unique source moments chronologically, gives them variable narration-paced durations, and selects real incoming actions plus a short result hold, excluding AI thinking pauses. Long clips play at most 1.12×; short ones hold their final frame.
 
@@ -60,6 +60,8 @@ Spoken narration defaults to local Indian-English neural speech after the one-ti
 Heart/Michael align word highlights to their model's phoneme timings when alignment succeeds. Indian English, system speech and rejected alignments use estimated weighted timings within the measured audible speech span; the timing JSON records this distinction. The same phrases are exported as SRT/WebVTT. The WAV voiceover, timing JSON and TXT script remain editable.
 
 Visual rerenders reuse the matching saved narration and word timing. Independent film plans have separate voice caches. Legacy shared-timeline projects require both films to be rendered together if the shared track is missing or no longer matches.
+
+Long silent padding between otherwise connected explanations can make a walkthrough feel segmented. Use narration-paced scene lengths, leaving a short breath within a page and slightly more time for a page change. The renderer rejects lengths that would rush speech. Internally, an explicitly reviewed old/new timeline can re-pad validated original takes without synthesizing a new voice; its assembly metadata records source clocks and exact sample intervals. This operation preserves spoken samples and shifts their captions together.
 
 ## AI editing plans and limits
 

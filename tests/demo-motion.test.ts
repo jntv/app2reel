@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attentionBounds, cameraAt, cameraForFrame, cameraKeys, cameraProjection, clipTiming, demoLayout, projectCursor, sourceTime } from '../server/demo-motion.js';
+import { spawnSync } from 'node:child_process';
+import ffmpeg from 'ffmpeg-static';
+import { attentionBounds, cameraAt, cameraFilter, cameraForFrame, cameraKeys, cameraProjection, cameraTiming, clipTiming, demoLayout, ease, projectCursor, sourceTime, transitionFilter } from '../server/demo-motion.js';
 import { cursorAt, detectOrangeCursor } from '../server/cursor-detection.js';
 import type { FilmState } from '../server/film-state.js';
 
@@ -25,7 +27,7 @@ test('zoom is visibly dynamic while subtle motion remains bounded', () => {
   const middle = cameraAt({ ...state, progress: 0.6 });
   assert.ok(middle.zoom - start.zoom > 0.3);
   assert.ok(cameraAt({ ...state, motion: 'subtle', progress: 0.6 }).zoom <= 1.47);
-  assert.equal(cameraAt({ ...state, progress: 0.6, focus: { x: -5, y: 4, zoom: 99 } }).x, 0);
+  assert.equal(cameraAt({ ...state, progress: 1, focus: { x: -5, y: 4, zoom: 99 } }).x, 0);
 });
 
 test('camera holds a settled closeup without a repeated six-second release', () => {
@@ -82,6 +84,74 @@ test('camera interpolation and projected pointer are continuous and correctly re
   assert.equal(pointer.visible, true);
   assert.ok(Math.abs(pointer.x - (layout.x + layout.width / 2)) < 1e-7);
   assert.ok(Math.abs(pointer.y - (layout.y + layout.height / 2)) < 1e-7);
+});
+
+test('edge detail pushes interpolate the complete affine transform without a clamp kink', () => {
+  const layout = demoLayout(1920, 1080);
+  const shot = { ...state, duration: 10, focus: { x: 0.89, y: 0.12, zoom: 2.1 }, focusArea: { x: 0.78, y: 0.04, width: 0.21, height: 0.16 }, camera: { contextHold: 1, moveDuration: 3, releaseDuration: 2 } };
+  const keys = cameraKeys(shot, 301, layout);
+  const point = { x: 0.87, y: 0.12 };
+  const start = projectCursor(point, cameraForFrame(keys, 30), layout);
+  const end = projectCursor(point, cameraForFrame(keys, 120), layout);
+  for (let frame = 30; frame <= 120; frame++) {
+    const progress = ease((frame - 30) / 90);
+    const camera = cameraForFrame(keys, frame);
+    const actual = projectCursor(point, camera, layout);
+    assert.ok(Math.abs(actual.x - (start.x + (end.x - start.x) * progress)) < 1e-6, `Horizontal pan changed velocity at frame ${frame}`);
+    assert.ok(Math.abs(actual.y - (start.y + (end.y - start.y) * progress)) < 1e-6, `Vertical pan changed velocity at frame ${frame}`);
+    const projection = cameraProjection(camera, layout);
+    assert.ok(projection.x >= 0 && projection.y >= 0);
+    assert.ok(projection.x + 1 / projection.zoom <= 1 + 1e-8 && projection.y + 1 / projection.zoom <= 1 + 1e-8);
+  }
+  const moving = projectCursor(point, cameraForFrame(keys, 31), layout);
+  assert.ok(Math.hypot(moving.x - start.x, moving.y - start.y) < 0.02, 'The move must depart from rest.');
+  const landing = projectCursor(point, cameraForFrame(keys, 119), layout);
+  assert.ok(Math.hypot(landing.x - end.x, landing.y - end.y) < 0.02, 'The move must arrive at rest.');
+  assert.ok(cameraTiming({ ...shot, camera: undefined }).move > 2.5, 'Automatic strong pushes need a readable movement duration.');
+});
+
+test('outgoing page dissolves begin after the camera has landed in context', () => {
+  const shot = { ...state, scene: 0, scenes: 2, duration: 9, focus: { x: 0.8, y: 0.15, zoom: 2 }, camera: { contextHold: 1, moveDuration: 2.5, releaseDuration: 2 }, transition: { type: 'dissolve' as const, duration: 0.8 }, externalTransitions: true };
+  const timing = cameraTiming(shot);
+  assert.equal(timing.releaseEnd, 8.4);
+  assert.equal(timing.releaseStart, 6.4);
+  const keys = cameraKeys(shot, 271, demoLayout(1920, 1080));
+  for (let frame = 252; frame <= 270; frame++) assert.deepEqual(cameraForFrame(keys, frame), { x: 0.5, y: 0.5, zoom: 1 });
+  assert.equal(cameraTiming({ ...shot, transition: { type: 'cut', duration: 0 } }).exitHold, 0, 'An explicit cut retains its reviewed camera end.');
+  assert.equal(cameraTiming({ ...shot, camera: { ...shot.camera, releaseDuration: 0 } }).exitHold, 0, 'A held detail does not acquire an unrequested pullback.');
+});
+
+test('actual affine camera pixels stay registered with the projected pointer on every frame', { skip: !ffmpeg }, () => {
+  const layout = demoLayout(640, 360), fps = 30, frames = 121;
+  const shot = { ...state, duration: 4, focus: { x: 0.89, y: 0.12, zoom: 2.1 }, focusArea: { x: 0.78, y: 0.04, width: 0.21, height: 0.16 }, camera: { contextHold: 0.3, moveDuration: 2.4, releaseDuration: 0.8 } };
+  const keys = cameraKeys(shot, frames, layout);
+  const result = spawnSync(ffmpeg!, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=black:s=960x540:r=30,drawbox=x=830:y=62:w=9:h=9:color=red:t=fill', '-vf', cameraFilter(keys, layout, fps), '-frames:v', String(frames), '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { maxBuffer: 100 * 1024 * 1024 });
+  assert.equal(result.status, 0, result.stderr.toString());
+  const stride = layout.width * layout.height * 3;
+  assert.equal(result.stdout.length, stride * frames);
+  for (let frame = 0; frame < frames; frame++) {
+    let sumX = 0, sumY = 0, pixels = 0;
+    for (let y = 0; y < layout.height; y++) for (let x = 0; x < layout.width; x++) {
+      const offset = frame * stride + (y * layout.width + x) * 3;
+      if (result.stdout[offset] > 180 && result.stdout[offset + 1] < 50 && result.stdout[offset + 2] < 50) { sumX += x; sumY += y; pixels++; }
+    }
+    assert.ok(pixels > 5, `Marker disappeared in frame ${frame}`);
+    const point = projectCursor({ x: 834.5 / 960, y: 66.5 / 540 }, cameraForFrame(keys, frame), layout);
+    assert.ok(Math.abs(sumX / pixels - (point.x - layout.x)) < 2 && Math.abs(sumY / pixels - (point.y - layout.y)) < 2, `Pointer and transformed pixels diverged in frame ${frame}`);
+  }
+});
+
+test('dissolve opacity eases at both ends while keeping exact centered frames', { skip: !ffmpeg }, () => {
+  const scenes = [{ frames: 90, transition: { type: 'dissolve' as const, duration: 0.8 } }, { frames: 90 }];
+  const { filters, label } = transitionFilter(scenes, 30);
+  const result = spawnSync(ffmpeg!, ['-hide_banner', '-loglevel', 'error', '-filter_complex_threads', '1', '-f', 'lavfi', '-i', 'color=red:s=32x18:r=30:d=3', '-f', 'lavfi', '-i', 'color=blue:s=32x18:r=30:d=3', '-filter_complex', filters.join(';'), '-map', `[${label}]`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { maxBuffer: 2 * 1024 * 1024 });
+  assert.equal(result.status, 0, result.stderr.toString());
+  const stride = 32 * 18 * 3;
+  assert.equal(result.stdout.length, stride * 180);
+  const color = (frame: number) => [...result.stdout.subarray(frame * stride, frame * stride + 3)];
+  assert.ok(color(81)[0] > 245 && color(81)[2] < 10, 'The dissolve should depart gently from the outgoing page.');
+  assert.ok(color(90)[0] > 115 && color(90)[0] < 140 && color(90)[2] > 115 && color(90)[2] < 140, 'The scene boundary remains the midpoint.');
+  assert.ok(color(99)[0] < 10 && color(99)[2] > 245, 'The dissolve should arrive gently at the incoming page.');
 });
 
 function cursorFrame(filled: boolean): Uint8Array {

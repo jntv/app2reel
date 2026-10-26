@@ -91,6 +91,6 @@ export async function prepareNarration(scenes:readonly Scene[],directory:string,
   await runEncoder(['-f','concat','-safe','1','-i',list,'-ar','48000','-ac','1','-c:a','pcm_s16le',file],signal);
   const voice=natural?options.voice||'melo_india':engine!.voice;
   const identity=natural?naturalVoiceIdentity(voice):{provider:engine!.provider};
-  await writeFile(path.join(directory,'narration-timing.json'),JSON.stringify({fingerprint:narrationFingerprint(scenes,{engine:natural?'natural':'system',voice:options.voice}),voice,...identity,alignments,cues},null,2));
+  await writeFile(path.join(directory,'narration-timing.json'),JSON.stringify({fingerprint:narrationFingerprint(scenes,{engine:natural?'natural':'system',voice:options.voice}),voice,...identity,clock:scenes.map((scene,index)=>({text:texts[index],frames:Math.max(1,Math.round(scene.duration*30))})),assembly:{version:1,method:'synthesized-takes',sampleRate:48000},alignments,cues},null,2));
   return {file,cues,voice};
 }

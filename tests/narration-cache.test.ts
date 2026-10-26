@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {narrationFingerprint, readPreparedNarration} from '../server/narration-cache.js';
+import {narrationFingerprint, readPreparedNarration, retimePreparedNarration} from '../server/narration-cache.js';
 
 const scenes = [{narration:'Hello, team.',caption:'Ignored',duration:1},{narration:'Keep work clear.',caption:'',duration:1}];
 const cues = [
@@ -116,5 +116,62 @@ test('symbolic links and preexisting render assets cannot be followed or overwri
     assert.equal(await readPreparedNarration(scenes,{},source,target),undefined);
     assert.equal(await readFile(sentinel,'utf8'),'keep this');
     if(name==='narration-timing.json')await assert.rejects(readFile(path.join(target,'narration.wav')),/ENOENT/);
+  }));
+});
+
+async function retimingFixture(run:(source:string,target:string,previous:typeof scenes,next:typeof scenes,metadata:Record<string,any>,original:Buffer)=>Promise<void>){
+  const root=await mkdtemp(path.join(tmpdir(),'capture-narration-retime-')),source=path.join(root,'project'),target=path.join(root,'staged');
+  await Promise.all([mkdir(source),mkdir(target)]);
+  const previous=scenes.map(scene=>({...scene,duration:4})),next=[{...scenes[0],duration:2},{...scenes[1],duration:2.2}];
+  const original=wave(8);original.fill(0,44);
+  for(const [index,length]of [[0,1],[1,1.4]])for(let sample=0;sample<length*48000;sample++)original.writeInt16LE(Math.round(Math.sin(sample/17)*(index?3000:5000)),44+(index*4*48000+.3*48000+sample)*2);
+  // A very quiet sample after the declared take is still part of the approved
+  // signal. Retiming must keep it, rather than use a loudness threshold to trim.
+  original.writeInt16LE(1,44+(4*48000+Math.round(1.701*48000))*2);
+  const metadata={fingerprint:narrationFingerprint(previous,{}),voice:'melo_india',provider:'MeloTTS ONNX',alignments:[{scene:1,rawDuration:1,tempo:1,lead:.3},{scene:2,rawDuration:1.4,tempo:1,lead:.3}],cues:[structuredClone(cues[0]),{...structuredClone(cues[1]),start:4.4,end:5.5,wordStarts:[4.4,4.7,5.1]}]};
+  metadata.cues[0]={...metadata.cues[0],start:.4,end:1.2,wordStarts:[.4,.8]};
+  await writeFile(path.join(source,'demo-narration.wav'),original);await writeFile(path.join(source,'demo-narration-timing.json'),JSON.stringify(metadata));
+  try{await run(source,target,previous,next,metadata,original);}finally{await rm(root,{recursive:true,force:true});}
+}
+
+test('approved-take retiming removes padding while preserving every voiced sample and its word clock',async()=>{
+  await retimingFixture(async(source,target,previous,next,metadata,original)=>{
+    const result=await retimePreparedNarration(previous,next,{},source,target,'demo'),retimed=await readFile(result.file);
+    assert.equal((retimed.length-44)/96000,4.2);assert.equal(result.voice,'melo_india');
+    const nonzero=(bytes:Buffer)=>{const samples:number[]=[];for(let i=44;i<bytes.length;i+=2){const value=bytes.readInt16LE(i);if(value!==0)samples.push(value);}return samples;};
+    assert.deepEqual(nonzero(retimed),nonzero(original),'Quiet edges, samples and sample order must be unchanged.');
+    const shifts=[-.14,-2.124];
+    for(let index=0;index<result.cues.length;index++){
+      assert.deepEqual(result.cues[index].words,metadata.cues[index].words);
+      assert.ok(Math.abs(result.cues[index].start-metadata.cues[index].start-shifts[index])<1e-9);
+      assert.ok(Math.abs(result.cues[index].end-metadata.cues[index].end-shifts[index])<1e-9);
+      for(let word=0;word<result.cues[index].wordStarts!.length;word++)assert.ok(Math.abs(result.cues[index].wordStarts![word]-metadata.cues[index].wordStarts[word]-shifts[index])<1e-9);
+    }
+    const saved=JSON.parse(await readFile(path.join(target,'narration-timing.json'),'utf8'));
+    assert.equal(saved.fingerprint,narrationFingerprint(next,{}));assert.equal(saved.assembly.method,'approved-takes');assert.equal(saved.assembly.sourceFingerprint,metadata.fingerprint);
+    assert.deepEqual(saved.assembly.sourceClock,previous.map(scene=>({text:scene.narration,frames:120})));assert.ok(saved.alignments.every((take:{tempo:number})=>take.tempo===1));
+    for(const take of saved.assembly.takes)assert.deepEqual(retimed.subarray(44+take.targetStartSample*2,44+take.targetEndSample*2),original.subarray(44+take.sourceStartSample*2,44+take.sourceEndSample*2));
+    const verified=path.join(target,'verified');await mkdir(verified);assert.ok(await readPreparedNarration(next,{},target,verified));
+    assert.deepEqual(await readFile(path.join(source,'demo-narration.wav')),original,'Approved source remains untouched.');
+  });
+});
+
+test('approved-take retiming rejects changed words, wrong clocks, clipped words and misbound takes',async t=>{
+  const modes=['changed words','changed order','wrong old clock','wrong voice','missing take','duplicate take','invalid tempo','cue outside take','too short','occupied staging'];
+  for(const mode of modes)await t.test(mode,async()=>retimingFixture(async(source,target,previous,next,metadata)=>{
+    if(mode==='changed words')next[0].narration='A different script.';
+    if(mode==='changed order')next.reverse();
+    if(mode==='wrong old clock')previous[0].duration=3.9;
+    if(mode==='wrong voice')metadata.voice='af_heart';
+    if(mode==='missing take')metadata.alignments.pop();
+    if(mode==='duplicate take')metadata.alignments[1].scene=1;
+    if(mode==='invalid tempo')metadata.alignments[0].tempo=.8;
+    if(mode==='cue outside take')metadata.alignments[0].rawDuration=.5;
+    if(mode==='too short')next[1].duration=1.5;
+    if(mode==='occupied staging')await writeFile(path.join(target,'narration-timing.json'),'keep this');
+    await writeFile(path.join(source,'demo-narration-timing.json'),JSON.stringify(metadata));
+    await assert.rejects(retimePreparedNarration(previous,next,{},source,target,'demo'));
+    await assert.rejects(readFile(path.join(target,'narration.wav')),/ENOENT/);
+    if(mode==='occupied staging')assert.equal(await readFile(path.join(target,'narration-timing.json'),'utf8'),'keep this');
   }));
 });

@@ -22,6 +22,7 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   await writeFile(path.join(store.dir(p.id),'captions.vtt'),'WEBVTT\n\n00:00:00.300 --> 00:00:01.800\nVoice timed words\n');
   await writeFile(path.join(store.dir(p.id),'promo-captions.vtt'),'WEBVTT\n\n00:00:00.300 --> 00:00:02.800\nA distinct motion film script.\n');
   await writeFile(path.join(store.dir(p.id),'promo-narration.wav'),'fixture-promo-voice');
+  await writeFile(path.join(store.dir(p.id),'promo-narration.txt'),'A scene\nA distinct motion film script.');
   await writeFile(path.join(store.dir(p.id),'narration.wav'),'stale-legacy-voice');
   await writeFile(path.join(store.dir(p.id),'stale.mp4'),Buffer.from('old export'));
   const probe=createServer();await new Promise<void>(resolve=>probe.listen(0,'127.0.0.1',resolve));
@@ -71,6 +72,7 @@ test('local HTTP serves referenced media in hidden storage and rejects stale med
   assert.equal(edited.status,200);const editedProject=await edited.json();assert.equal(editedProject.scenes[0].duration,5);
   assert.deepEqual(editedProject.outputs.map((output:{kind:string})=>output.kind),['promo'],'A changed demo script must preserve the independent narrated promo.');
   assert.match(await (await fetch(`${base}/artifacts/${p.id}/promo-captions.vtt`)).text(),/distinct motion film/);
+  assert.equal(await(await fetch(`${base}/artifacts/${p.id}/promo-narration.txt`)).text(),'A scene\nA distinct motion film script.','Editing the demo must preserve the completed promo script byte-for-byte.');
   const inconsistent=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({filmPlans:{demo:{...newDemo,targetDuration:8}}})});assert.equal(inconsistent.status,400);
   const lengthOnly=await fetch(`${base}/api/projects/${p.id}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({brief:{duration:110,promoDuration:45}})});
   assert.equal(lengthOnly.status,200);assert.equal((await lengthOnly.json()).scenes[0].duration,5,'Saving film length targets must retain captured product evidence.');

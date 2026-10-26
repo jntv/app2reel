@@ -1,7 +1,11 @@
 import type { EditTransition, PrivacyMask } from '../shared/types.js';
 import type { FilmState } from './film-state.js';
 
-export interface DemoCamera { x: number; y: number; zoom: number }
+export interface DemoCamera {
+  x: number; y: number; zoom: number;
+  /** Generated moves carry their already-projected viewport to avoid edge-clamp kinks. */
+  viewport?: { x: number; y: number };
+}
 export interface CameraKey extends DemoCamera { frame: number }
 export interface DemoLayout { x: number; y: number; width: number; height: number }
 export interface ProjectedArea extends DemoLayout { visible: boolean }
@@ -41,7 +45,7 @@ export function attentionBounds(area: PrivacyMask, cursors: { x: number; y: numb
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-export interface CameraTiming { start: number; move: number; duration: number; targetZoom: number; release: number; releaseStart: number }
+export interface CameraTiming { start: number; move: number; duration: number; targetZoom: number; release: number; releaseStart: number; releaseEnd: number; exitHold: number }
 
 /** A held context followed by one settled, sustained detail shot, paced in seconds. */
 export function cameraTiming(state: FilmState, layout = demoLayout(1920, 1080), bounds?: PrivacyMask): CameraTiming {
@@ -57,11 +61,21 @@ export function cameraTiming(state: FilmState, layout = demoLayout(1920, 1080), 
   let targetZoom = Math.max(1, Math.min(clamp(authored.zoom, 1, 2.4), subtle ? 1.24 : overview ? 1.25 : detail ? 2.2 : 1.85, limit));
   const ready = Math.max(0, Math.min(duration, state.focusRevealAt ?? Math.min(0.72, duration * 0.14)));
   const start = state.camera ? Math.min(duration,Math.max(ready,clamp(state.camera.contextHold,0,duration))) : Math.min(duration, ready + (ready > 0 ? 0.08 : 0.22));
-  const available = duration - start;
-  const move = state.camera ? Math.min(available,clamp(state.camera.moveDuration,.2,10)) : Math.min(overview ? 1.65 : detail ? 1.0 : 1.2, Math.max(0.45, available * 0.45));
+  // A centered page edit starts before the scene's nominal end. Land the
+  // outgoing camera first, so a dissolve blends matching context frames rather
+  // than a moving closeup with an incoming full page.
+  const transition = state.transition ?? { type: 'dissolve', duration: 0.6 };
+  const exitHold = state.externalTransitions && state.scene < state.scenes - 1 && state.camera?.releaseDuration && transition.type !== 'cut'
+    ? Math.min(duration - start, transition.duration / 2 + 0.2) : 0;
+  const available = duration - start - exitHold;
+  // Strong detail pushes need more time than overviews. A fixed one-second
+  // automatic push made a 2.2x closeup accelerate far faster than a gentle crop.
+  const comfortableMove = overview ? 1.8 : 1.45 + (targetZoom - 1) * 1.1;
+  const move = state.camera ? Math.min(available,clamp(state.camera.moveDuration,.2,10)) : Math.min(comfortableMove, Math.max(0.45, available * 0.55));
   const release=state.camera?Math.min(clamp(state.camera.releaseDuration,0,10),Math.max(0,available-move)):0;
   if (available < 0.7) targetZoom = 1;
-  return { start, move, duration, targetZoom, release, releaseStart:duration-release };
+  const releaseEnd = duration - exitHold;
+  return { start, move, duration, targetZoom, release, releaseStart:releaseEnd-release, releaseEnd, exitHold };
 }
 
 /** Pointer movement cannot perturb this editorial camera. */
@@ -72,16 +86,20 @@ export function cameraAt(state: FilmState, layout = demoLayout(1920, 1080), boun
   const timing = cameraTiming(state, layout, bounds);
   const time=clamp(state.progress)*timing.duration;
   const amount = ease((time-timing.start)/Math.max(.001,timing.move))*(timing.release?1-ease((time-timing.releaseStart)/timing.release):1);
-  return { x: 0.5 + (clamp(subject.x) - 0.5) * amount, y: 0.5 + (clamp(subject.y) - 0.5) * amount, zoom: 1 + (timing.targetZoom - 1) * amount };
+  const context = { x: 0.5, y: 0.5, zoom: 1 };
+  const target = { x: clamp(subject.x), y: clamp(subject.y), zoom: timing.targetZoom };
+  return interpolateCamera(context, target, amount, cameraProjection(context, layout), cameraProjection(target, layout));
 }
 
 export function cameraKeys(state: FilmState, frames: number, layout: DemoLayout, bounds?: PrivacyMask): CameraKey[] {
   const timing = cameraTiming(state, layout, bounds);
   const keys = new Map<number, CameraKey>();
-  for (const time of [0, timing.start, Math.min(timing.duration, timing.start + timing.move),timing.releaseStart, timing.duration]) {
+  for (const time of [0, timing.start, Math.min(timing.duration, timing.start + timing.move),timing.releaseStart, timing.releaseEnd, timing.duration]) {
     const progress = clamp(time / timing.duration);
     const frame = Math.round(progress * Math.max(0, frames - 1));
-    keys.set(frame, { frame, ...cameraAt({ ...state, progress }, layout, bounds) });
+    const camera = cameraAt({ ...state, progress }, layout, bounds);
+    const projection = cameraProjection(camera, layout);
+    keys.set(frame, { frame, ...camera, viewport: { x: projection.x, y: projection.y } });
   }
   return [...keys.values()];
 }
@@ -110,7 +128,13 @@ export function transitionFilter(scenes:readonly {frames:number;transition?:Edit
     const frames=Math.round((elapsed+scenes[index].frames/fps+(transitions[index]?.half||0))*fps);
     const finish=`trim=end_frame=${frames},setpts=PTS-STARTPTS[${next}]`;
     if(transition.type==='cut')filters.push(`[${label}][clip${index}]concat=n=2:v=1:a=0,settb=AVTB,${finish}`);
-    else filters.push(`[${label}][clip${index}]xfade=transition=${transition.type==='fade'?'fadeblack':transition.type==='slide'?'smoothleft':'fade'}:duration=${transition.duration}:offset=${(elapsed-transition.half).toFixed(8)},${finish}`);
+    else {
+      // Quintic opacity gives a dissolve the same gentle departure/arrival as
+      // the camera, instead of suddenly changing opacity at constant speed.
+      const eased = '(P*P*P*(P*(P*6-15)+10))';
+      const effect = transition.type === 'dissolve' ? `custom:expr='A*${eased}+B*(1-${eased})'` : transition.type === 'fade' ? 'fadeblack' : 'smoothleft';
+      filters.push(`[${label}][clip${index}]xfade=transition=${effect}:duration=${transition.duration}:offset=${(elapsed-transition.half).toFixed(8)},${finish}`);
+    }
     label=next;elapsed+=scenes[index].frames/fps;
   }
   return {filters,label};
@@ -122,11 +146,27 @@ export function cameraForFrame(keys: CameraKey[], frame: number): DemoCamera {
   for (const after of keys.slice(1)) {
     if (frame <= after.frame) {
       const t = ease((frame - before.frame) / Math.max(1, after.frame - before.frame));
-      return { x: before.x + (after.x - before.x) * t, y: before.y + (after.y - before.y) * t, zoom: before.zoom + (after.zoom - before.zoom) * t };
+      return interpolateCamera(before, after, t, before.viewport, after.viewport);
     }
     before = after;
   }
   return { x: before.x, y: before.y, zoom: before.zoom };
+}
+
+/**
+ * Interpolate the complete source-to-screen affine transform. Interpolating a
+ * focus point and clamping the crop on every frame causes a visible pan kink
+ * when a top/right detail reaches an edge. Endpoint crop validation happens
+ * once; the convex affine path stays inside the fitted source canvas.
+ */
+function interpolateCamera(a: DemoCamera, b: DemoCamera, amount: number, from?: { x: number; y: number }, to?: { x: number; y: number }): DemoCamera {
+  const t = clamp(amount);
+  const camera = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, zoom: a.zoom + (b.zoom - a.zoom) * t };
+  if (!from || !to || t === 0 || t === 1 || (a.zoom === b.zoom && from.x === to.x && from.y === to.y)) return camera;
+  return { ...camera, viewport: {
+    x: (from.x * a.zoom + (to.x * b.zoom - from.x * a.zoom) * t) / camera.zoom,
+    y: (from.y * a.zoom + (to.y * b.zoom - from.y * a.zoom) * t) / camera.zoom,
+  } };
 }
 
 /** Projection is a fit, not a fill: context zoom 1 shows every source pixel. */
@@ -138,8 +178,8 @@ export function cameraProjection(camera: DemoCamera, layout: DemoLayout, sourceA
   const sourceY = (1 - sourceHeight) / 2;
   const zoom = clamp(camera.zoom, 1, 2.5);
   const view = 1 / zoom;
-  const x = view >= sourceWidth ? (1 - view) / 2 : clamp(sourceX + clamp(camera.x) * sourceWidth - view / 2, sourceX, sourceX + sourceWidth - view);
-  const y = view >= sourceHeight ? (1 - view) / 2 : clamp(sourceY + clamp(camera.y) * sourceHeight - view / 2, sourceY, sourceY + sourceHeight - view);
+  const x = camera.viewport ? clamp(camera.viewport.x, 0, 1 - view) : view >= sourceWidth ? (1 - view) / 2 : clamp(sourceX + clamp(camera.x) * sourceWidth - view / 2, sourceX, sourceX + sourceWidth - view);
+  const y = camera.viewport ? clamp(camera.viewport.y, 0, 1 - view) : view >= sourceHeight ? (1 - view) / 2 : clamp(sourceY + clamp(camera.y) * sourceHeight - view / 2, sourceY, sourceY + sourceHeight - view);
   return { zoom, sourceX, sourceY, sourceWidth, sourceHeight, x, y };
 }
 
@@ -176,7 +216,8 @@ export function cameraFilter(keys: CameraKey[], layout: DemoLayout, fps: number,
   const workWidth = layout.width * 2, workHeight = layout.height * 2;
   const color = /^#[\da-f]{6}$/i.test(surface) ? `0x${surface.slice(1)}` : '0xf4f6f9';
   const zoom = expression(keys, 'zoom');
-  const x = `if(gte(iw/zoom,iw*${p.sourceWidth.toFixed(7)}),(iw-iw/zoom)/2,clip(iw*(${p.sourceX.toFixed(7)}+(${expression(keys, 'x')})*${p.sourceWidth.toFixed(7)})-iw/zoom/2,iw*${p.sourceX.toFixed(7)},iw*${(p.sourceX + p.sourceWidth).toFixed(7)}-iw/zoom))`;
-  const y = `if(gte(ih/zoom,ih*${p.sourceHeight.toFixed(7)}),(ih-ih/zoom)/2,clip(ih*(${p.sourceY.toFixed(7)}+(${expression(keys, 'y')})*${p.sourceHeight.toFixed(7)})-ih/zoom/2,ih*${p.sourceY.toFixed(7)},ih*${(p.sourceY + p.sourceHeight).toFixed(7)}-ih/zoom))`;
+  const affineKeys = keys.every(key => key.viewport) ? keys.map(key => ({ ...key, x: key.viewport!.x * key.zoom, y: key.viewport!.y * key.zoom })) : undefined;
+  const x = affineKeys ? `iw*(${expression(affineKeys, 'x')})/zoom` : `if(gte(iw/zoom,iw*${p.sourceWidth.toFixed(7)}),(iw-iw/zoom)/2,clip(iw*(${p.sourceX.toFixed(7)}+(${expression(keys, 'x')})*${p.sourceWidth.toFixed(7)})-iw/zoom/2,iw*${p.sourceX.toFixed(7)},iw*${(p.sourceX + p.sourceWidth).toFixed(7)}-iw/zoom))`;
+  const y = affineKeys ? `ih*(${expression(affineKeys, 'y')})/zoom` : `if(gte(ih/zoom,ih*${p.sourceHeight.toFixed(7)}),(ih-ih/zoom)/2,clip(ih*(${p.sourceY.toFixed(7)}+(${expression(keys, 'y')})*${p.sourceHeight.toFixed(7)})-ih/zoom/2,ih*${p.sourceY.toFixed(7)},ih*${(p.sourceY + p.sourceHeight).toFixed(7)}-ih/zoom))`;
   return `scale=${workWidth}:${workHeight}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${workWidth}:${workHeight}:(ow-iw)/2:(oh-ih)/2:color=${color},setsar=1,zoompan=z='${zoom}':x='${x}':y='${y}':d=1:s=${layout.width}x${layout.height}:fps=${fps}`;
 }

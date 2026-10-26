@@ -9,7 +9,7 @@ import { DEFAULT_RENDER_SETTINGS, type OutputKind, type Project, type Scene, typ
 import type { FilmState } from './film-state.js';
 import { promoTemplate } from './promo-template.js';
 import { renderDynamicDemo } from './demo-renderer.js';
-import { subtitleAt, subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
+import { subtitleAt, subtitleOpacityAt, subtitleCues, subtitleSrt, subtitleVtt } from './subtitles.js';
 import { prepareNarration } from './narration.js';
 import { readPreparedNarration } from './narration-cache.js';
 import { productFontCss, resolveFilmTheme } from './film-theme.js';
@@ -219,7 +219,7 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       const cues=narration?.cues||subtitleCues(scenes);
       const stateAt=(sceneIndex:number,progress:number,totalFrame:number):FilmState=>{
         const scene=scenes[sceneIndex],time=(totalFrame+.5)/FPS;
-        return {name:safeText(project.brief.name,80),title:safeText(scene.title,160),caption:safeText(scene.caption,360),feature:safeText(scene.feature||`Chapter ${String(sceneIndex+1).padStart(2,'0')}`,100),url:humanUrl(project.brief.url),scene:sceneIndex,scenes:scenes.length,progress,totalProgress:(totalFrame+.5)/totalFrames,time,duration:scene.duration,motion:settings.motion,focus:scene.focus,focusArea:scene.focusArea,focusRevealAt:scene.focusRevealAt,camera:scene.camera,transition:scene.transition,externalTransitions:true,visualModel:scene.visualModel,...(settings.subtitles?subtitleAt(cues,time):{subtitle:'',subtitleWord:-1})};
+        return {name:safeText(project.brief.name,80),title:safeText(scene.title,160),caption:safeText(scene.caption,360),feature:safeText(scene.feature||`Chapter ${String(sceneIndex+1).padStart(2,'0')}`,100),url:humanUrl(project.brief.url),scene:sceneIndex,scenes:scenes.length,progress,totalProgress:(totalFrame+.5)/totalFrames,time,duration:scene.duration,motion:settings.motion,focus:scene.focus,focusArea:scene.focusArea,focusRevealAt:scene.focusRevealAt,camera:scene.camera,transition:scene.transition,externalTransitions:true,visualModel:scene.visualModel,...(settings.subtitles?{...subtitleAt(cues,time),subtitleOpacity:subtitleOpacityAt(cues,time)}:{subtitle:'',subtitleWord:-1,subtitleOpacity:0})};
       };
       const {width,height}=outputDimensions(project,kind);
       await page.setViewportSize({width,height});

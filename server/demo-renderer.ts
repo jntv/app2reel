@@ -6,11 +6,12 @@ import type { Page } from 'playwright';
 import type { PrivacyMask, ProductTheme, Project, Scene } from '../shared/types.js';
 import type { FilmState } from './film-state.js';
 import { demoTemplate } from './demo-template.js';
-import { attentionBounds, cameraKeys, cameraTiming, cameraFilter, cameraForFrame, clipTiming, demoLayout, ease, projectArea, projectCursor, sourceTime, transitionFilter } from './demo-motion.js';
+import { attentionBounds, cameraKeys, cameraTiming, cameraFilter, cameraForFrame, clipTiming, demoLayout, projectArea, projectCursor, sourceTime, transitionFilter } from './demo-motion.js';
 import { cursorAt, extractRenderedCursorFrames, type CursorPoint } from './cursor-detection.js';
 import { privacyFilters, type PrivacyRectangle } from './demo-privacy.js';
 import {prepareDemoEdit} from './demo-edit.js';
 import {renderedClipClock} from './clip-clock.js';
+import {demoArtworkTiming,focusLabelAnchor} from './demo-artwork.js';
 
 type Encoder = { process: ChildProcess; done: Promise<void>; stop: () => void };
 export interface DynamicDemoOptions {
@@ -90,6 +91,7 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
     // A single shot plan includes pointer evidence without chasing its motion.
     const cameraPlan = cameraKeys({ ...frameState(0), focusArea: area }, scene.frames, layout, bounds);
     const move = cameraTiming({ ...frameState(0), focusArea: area }, layout, bounds);
+    const labelAnchor=focusLabelAnchor(cameraPlan.map(camera=>projectArea(area,camera,layout)),layout,width/1920);
     const privacy = privacyFilters((scene as Scene & { redactions?: PrivacyRectangle[] }).redactions);
     const clock=renderedClipClock({...timing,frames:scene.frames},fps);
     const filter = [
@@ -119,7 +121,7 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
         await page.evaluate(async payload => {
           const target = window as unknown as { setDemoState: (value: unknown) => Promise<void> };
           await target.setDemoState(payload);
-        }, { film, cursor: pointer, click, attention, openingOpacity: index === 0 ? ease(frame / fps / 0.15) * (1 - ease((frame / fps - 0.55) / 0.2)) : 0, closingOpacity: index === scenes.length - 1 ? ease((frame / fps - (outputDuration - 0.85)) / 0.25) : 0, attentionOpacity: ease((frame / fps - move.start - move.move * 0.55) / 0.4) * Math.max(0, Math.min(1, (scene.frames - 1 - frame) / (fps * 0.12))), captionOpacity: Math.max(0, Math.min(1, frame / (fps * 0.12), (scene.frames - 1 - frame) / (fps * 0.12))), cursorHighlights: settings?.cursorHighlights !== false });
+        }, { film, cursor: pointer, click, attention, labelAnchor,...demoArtworkTiming(frame/fps,outputDuration,move,index===0,index===scenes.length-1),captionOpacity:film.subtitleOpacity??1,cursorHighlights:settings?.cursorHighlights!==false });
         const pixels = await page.screenshot({ type: 'png', omitBackground: true, animations: 'disabled' });
         const input = job.process.stdin;
         if (!input || input.destroyed) { await job.done; throw new Error('Demo encoder input closed.'); }

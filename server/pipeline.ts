@@ -156,7 +156,7 @@ Return ${Math.min(3,p.shots.length)} to ${Math.min(16,p.shots.length)} distinct 
         writeFile(path.join(directory,'captions.vtt'),subtitleVtt(cues))
       ]:[]),
       ...Object.entries(p.filmPlans||{}).flatMap(([kind,plan])=>plan?[
-        writeFile(path.join(directory,`${kind}-narration.txt`),plan.scenes.map((s,i)=>`${i+1}. ${s.title}\n${s.narration}`).join('\n\n')),
+        ...(!p.outputs.some(output=>output.kind===kind)?[writeFile(path.join(directory,`${kind}-narration.txt`),plan.scenes.map((s,i)=>`${i+1}. ${s.title}\n${s.narration}`).join('\n\n'))]:[]),
         ...(!p.outputs.some(output=>output.kind===kind&&output.narrated)?[
           writeFile(path.join(directory,`${kind}-captions.srt`),subtitleSrt(subtitleCues(plan.scenes))),
           writeFile(path.join(directory,`${kind}-narration.srt`),subtitleSrt(subtitleCues(plan.scenes))),

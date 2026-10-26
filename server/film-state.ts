@@ -13,6 +13,7 @@ export interface FilmState {
   duration?: number;
   subtitle?: string;
   subtitleWord?: number;
+  subtitleOpacity?: number;
   motion?: 'cinematic' | 'subtle';
   focus?: { x: number; y: number; zoom: number };
   focusArea?: PrivacyMask;
