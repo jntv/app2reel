@@ -16,3 +16,4 @@ Initial source release preparation. No GitHub release has been published yet.
 
 - Keep an exact frame clock through mixed cuts and transitions on Linux FFmpeg.
 - Preserve the full narration duration at 48 kHz so visual-only rerenders can reuse reviewed speech and captions.
+- Keep ducked background music present through the final audio frame when replacing a film's existing mix.

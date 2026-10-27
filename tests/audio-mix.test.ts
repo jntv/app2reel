@@ -135,9 +135,15 @@ test('remixing from an already mixed film replaces its audio rather than stackin
   try{
     const {video,voice}=await fixture(directory),voiceHash=createHash('sha256').update(await readFile(voice)).digest('hex');
     const first=await mix(directory,'first',video,voice,{backgroundMusic:true,musicVolume:.24});
-    const second=await mix(directory,'second',first,voice,{backgroundMusic:true,musicVolume:.24});
-    assertSamePcm(await decoded(second),await decoded(first),'Reusing the original speech and score must be independent of the input movie’s audio.');
-    assert.equal(await pictureHash(first),await pictureHash(second));
+    const expected=await decoded(first),picture=await pictureHash(first);
+    let previous=first;
+    // Repeated replacements catch scheduling-dependent differences near audio EOF.
+    for(let attempt=1;attempt<=3;attempt++){
+      const next=await mix(directory,`remix-${attempt}`,previous,voice,{backgroundMusic:true,musicVolume:.24});
+      assertSamePcm(await decoded(next),expected,`Remix ${attempt} must reuse the original speech and score independently of the input movie's audio.`);
+      assert.equal(await pictureHash(next),picture);
+      previous=next;
+    }
     assert.equal(createHash('sha256').update(await readFile(voice)).digest('hex'),voiceHash);
   }finally{await rm(directory,{recursive:true,force:true});}
 });
