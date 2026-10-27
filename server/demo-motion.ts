@@ -119,14 +119,17 @@ export function transitionSchedule(scenes:readonly {frames:number;transition?:Ed
 /** Center each outgoing edit on its original boundary, with no narration drift. */
 export function transitionFilter(scenes:readonly {frames:number;transition?:EditTransition}[],fps:number):{filters:string[];label:string}{
   const transitions=transitionSchedule(scenes,fps);
-  const filters=scenes.map((_,index)=>`[${index}:v]fps=${fps},settb=AVTB,setpts=PTS-STARTPTS,tpad=start_mode=clone:start_duration=${transitions[index-1]?.half||0}:stop_mode=clone:stop_duration=${transitions[index]?.half||0}[clip${index}]`);
+  // FFmpeg 7 setpts clears frame-rate metadata. Restore it before tpad computes
+  // its handle lengths and before xfade validates the incoming clips.
+  const filters=scenes.map((_,index)=>`[${index}:v]setpts=PTS-STARTPTS,fps=${fps},settb=AVTB,tpad=start_mode=clone:start_duration=${transitions[index-1]?.half||0}:stop_mode=clone:stop_duration=${transitions[index]?.half||0}[clip${index}]`);
   let label='clip0',elapsed=scenes[0].frames/fps;
   for(let index=1;index<scenes.length;index++){
     const transition=transitions[index-1],next=`join${index}`;
     // xfade can emit an inclusive terminal frame. Bound every join so that
-    // rounding cannot accumulate into later editorial boundaries.
+    // rounding cannot accumulate into later editorial boundaries. Rebuild PTS
+    // from the frame index so AVTB rounding cannot duplicate an encoded frame.
     const frames=Math.round((elapsed+scenes[index].frames/fps+(transitions[index]?.half||0))*fps);
-    const finish=`trim=end_frame=${frames},setpts=PTS-STARTPTS[${next}]`;
+    const finish=`trim=end_frame=${frames},setpts=N/(${fps}*TB),fps=${fps},settb=AVTB[${next}]`;
     if(transition.type==='cut')filters.push(`[${label}][clip${index}]concat=n=2:v=1:a=0,settb=AVTB,${finish}`);
     else {
       // Quintic opacity gives a dissolve the same gentle departure/arrival as

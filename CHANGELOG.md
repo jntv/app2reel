@@ -11,3 +11,8 @@ Initial source release preparation. No GitHub release has been published yet.
 - Independent demo and promotional film plans, privacy masks, narration, and subtitle exports.
 - Local speech setup and a fictional sample project for trying recording and rendering.
 - Installation and development guides, contribution guidelines, issue forms, and release-note categories.
+
+### Fixed
+
+- Keep an exact frame clock through mixed cuts and transitions on Linux FFmpeg.
+- Preserve the full narration duration at 48 kHz so visual-only rerenders can reuse reviewed speech and captions.
