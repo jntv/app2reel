@@ -8,6 +8,8 @@ These are complete App2Reel films made for SmartSevak, using a recorded product 
 
 An 88-second landscape film with real browser footage, eased camera moves, pointer highlights, focus outlines, and word-highlighted subtitles. The light-gray rectangles are intentional privacy masks over account and personal details, including during camera moves and transitions.
 
+Some saved masks cover broad table regions and remain visible on empty views. Masks belong to this sample's edit; you can [adjust per-scene privacy masks](usage.md#privacy-masks) for your own recording.
+
 https://github.com/user-attachments/assets/f9e535a2-9986-466b-a1a9-bbdaa06710e0
 
 ## Launch film

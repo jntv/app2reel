@@ -2,9 +2,10 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { Store, briefSchema, sceneSchema, filmPlansSchema, renderSettingsSchema, productThemeSchema } from './store.js';
+import { Store, briefSchema, briefPatchSchema, sceneSchema, filmPlansSchema, renderSettingsSchema, productThemeSchema } from './store.js';
 import { LocalAI } from './ai.js';
 import { Pipeline } from './pipeline.js';
 import { browserAvailable, clearSessions, completeLogin, discardSession, loginStatus, openLogin } from './browser.js';
@@ -57,7 +58,7 @@ app.post('/api/projects/:id/plan',asyncRoute(async(req,res)=>{
 }));
 app.put('/api/projects/:id',asyncRoute(async(req,res)=>{
   pipeline.assertIdle();const p=store.get(String(req.params.id));
-  const patch=z.object({brief:briefSchema.partial().optional(),scenes:z.array(sceneSchema).min(1).max(20).optional(),filmPlans:filmPlansSchema.optional(),renderSettings:renderSettingsSchema.optional(),productTheme:productThemeSchema.optional()}).strict().parse(req.body);
+  const patch=z.object({brief:briefPatchSchema.optional(),scenes:z.array(sceneSchema).min(1).max(20).optional(),filmPlans:filmPlansSchema.optional(),renderSettings:renderSettingsSchema.optional(),productTheme:productThemeSchema.optional()}).strict().parse(req.body);
   if(patch.scenes&&patch.filmPlans)throw new Error('Save either the shared storyboard or the independent film plans in one request.');
   if(patch.productTheme&&new URL(patch.productTheme.sourceUrl).origin!==new URL(patch.brief?.url||p.brief.url).origin)throw new Error('The product theme must come from this product URL.');
   if(patch.brief){
@@ -154,13 +155,14 @@ app.use((error:unknown,_req:express.Request,res:express.Response,_next:express.N
   const e=error as Error&{status?:number};return res.status(e.status||400).json({error:e.message||'Request failed'});
 });
 
+const server=createServer(app);
 let vite:Awaited<ReturnType<typeof createViteServer>>|undefined;
 if(existsSync(path.join(root,'dist/index.html'))&&(process.env.NODE_ENV==='production'||process.argv.includes('--production'))){
   app.use(express.static(path.join(root,'dist')));app.get('/{*path}',(_req,res)=>res.sendFile(path.join(root,'dist/index.html')));
 }else{
-  vite=await createViteServer({root,server:{middlewareMode:true,hmr:false},appType:'spa'});
+  vite=await createViteServer({root,server:{middlewareMode:true,hmr:{server}},appType:'spa'});
   app.use(vite.middlewares);
 }
-const server=app.listen(port,'127.0.0.1',()=>console.log(`App2Reel is ready at http://127.0.0.1:${port}`));
+server.listen(port,'127.0.0.1',()=>console.log(`App2Reel is ready at http://127.0.0.1:${port}`));
 async function shutdown(){await closeNarration();await clearSessions();await vite?.close();server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),2000).unref();}
 process.on('SIGINT',()=>void shutdown());process.on('SIGTERM',()=>void shutdown());

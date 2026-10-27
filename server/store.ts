@@ -16,6 +16,17 @@ export const briefSchema = z.object({
   allowWrites: z.boolean().default(false), sample: z.boolean().default(false)
 }).strict();
 
+// A patch must preserve omitted fields; Zod 4 otherwise applies defaults inside .partial().
+export const briefPatchSchema = briefSchema.partial().extend({
+  brandColor:briefSchema.shape.brandColor.unwrap().optional(),
+  duration:briefSchema.shape.duration.unwrap().optional(),
+  resolution:briefSchema.shape.resolution.unwrap().optional(),
+  maxSteps:briefSchema.shape.maxSteps.unwrap().optional(),
+  allowedOrigins:briefSchema.shape.allowedOrigins.unwrap().optional(),
+  allowWrites:briefSchema.shape.allowWrites.unwrap().optional(),
+  sample:briefSchema.shape.sample.unwrap().optional()
+});
+
 export const renderSettingsSchema = z.object({
   motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean(),
   narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional(), promoAspect: z.enum(['landscape','portrait']).optional(),

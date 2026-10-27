@@ -30,7 +30,7 @@ pnpm dev
 
 Open **[http://127.0.0.1:4310](http://127.0.0.1:4310)**. Keep the terminal running while using the studio. `setup` downloads Playwright's Chromium browser; `doctor` checks your local prerequisites and reports what still needs attention. Codex login and natural voices are optional for the sample path below.
 
-The workspace configuration allows the `ffmpeg-static` and `esbuild` dependency build scripts. Approve those scripts if your pnpm version asks. On a restricted network, supply an existing FFmpeg executable with `FFMPEG_PATH`.
+The repository allows the `ffmpeg-static` and `esbuild` install scripts in pnpm and npm 12. These supply the encoder and build tools; other optional dependency scripts can remain blocked. On a restricted network, supply an existing FFmpeg executable with `FFMPEG_PATH`.
 
 ### Linux browser dependencies
 

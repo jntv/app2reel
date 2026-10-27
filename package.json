@@ -7,6 +7,10 @@
   "license": "MIT",
   "engines": { "node": ">=22.13" },
   "packageManager": "pnpm@11.25.0",
+  "allowScripts": {
+    "esbuild": true,
+    "ffmpeg-static": true
+  },
   "repository": { "type": "git", "url": "git+https://github.com/jntv/app2reel.git" },
   "homepage": "https://github.com/jntv/app2reel#readme",
   "bugs": { "url": "https://github.com/jntv/app2reel/issues" },
@@ -30,7 +34,7 @@
     "pngjs": "7.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "zod": "^3.25.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

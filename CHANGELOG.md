@@ -12,9 +12,13 @@ Initial source release preparation. No GitHub release has been published yet.
 - Product-themed full-screen intros and closing invitations for both films, with a saved Film style toggle.
 - Local speech setup and a fictional sample project for trying recording and rendering.
 - Installation and development guides, contribution guidelines, issue forms, and release-note categories.
+- Complete narrated sample films with public video players in the README.
 
 ### Fixed
 
+- Allow the FFmpeg and esbuild install scripts required by npm 12, with a separate npm installation check in CI.
+- Share the development WebSocket with the studio's HTTP port so simultaneous instances do not compete for port 24678.
+- Update request validation to Zod 4.6.7 while preserving omitted project settings during partial edits.
 - Keep opaque intro cards and transparent walkthrough artwork on one RGBA frame format, preventing encoder filter resets from advancing held footage into the next page.
 - Keep an exact frame clock through mixed cuts and transitions on Linux FFmpeg.
 - Preserve the full narration duration at 48 kHz so visual-only rerenders can reuse reviewed speech and captions.
