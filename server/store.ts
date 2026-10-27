@@ -20,7 +20,7 @@ export const renderSettingsSchema = z.object({
   motion: z.enum(['cinematic','subtle']), subtitles: z.boolean(), cursorHighlights: z.boolean(),
   narration: z.boolean().optional(), themeSource: z.enum(['product','custom']).optional(), promoAspect: z.enum(['landscape','portrait']).optional(),
   narrationEngine:z.enum(['natural','system']).optional(),narrationVoice:z.enum(['melo_india','af_heart','am_michael','qwen_indian_male','qwen_indian_female']).optional(),
-  backgroundMusic:z.boolean().optional(),musicVolume:z.number().min(0).max(.5).optional()
+  backgroundMusic:z.boolean().optional(),musicVolume:z.number().min(0).max(.5).optional(),bookends:z.boolean().optional()
 }).strict();
 
 const colorSchema=z.string().regex(/^#[0-9a-f]{6}$/i);

@@ -14,8 +14,8 @@ export interface ProductTheme {
 export interface ProductVisualModel { heading?: string; labels: string[]; layout: 'dashboard'|'table'|'calendar'|'form'|'analytics'|'workspace'; accent?: string; }
 export interface CursorSample { at: number; x: number; y: number; kind: 'move'|'click'|'type'; }
 export type NarrationVoice='melo_india'|'af_heart'|'am_michael'|'qwen_indian_male'|'qwen_indian_female';
-export interface RenderSettings { motion: 'cinematic'|'subtle'; subtitles: boolean; cursorHighlights: boolean; narration?: boolean; narrationEngine?: 'natural'|'system'; narrationVoice?: NarrationVoice; backgroundMusic?: boolean; musicVolume?: number; themeSource?: 'product'|'custom'; promoAspect?: 'landscape'|'portrait'; }
-export const DEFAULT_RENDER_SETTINGS: RenderSettings = { motion: 'cinematic', subtitles: true, cursorHighlights: true, narration: true, narrationEngine:'natural', narrationVoice:'melo_india', backgroundMusic:true, musicVolume:.24, themeSource: 'product', promoAspect: 'landscape' };
+export interface RenderSettings { motion: 'cinematic'|'subtle'; subtitles: boolean; cursorHighlights: boolean; narration?: boolean; narrationEngine?: 'natural'|'system'; narrationVoice?: NarrationVoice; backgroundMusic?: boolean; musicVolume?: number; bookends?: boolean; themeSource?: 'product'|'custom'; promoAspect?: 'landscape'|'portrait'; }
+export const DEFAULT_RENDER_SETTINGS: RenderSettings = { motion: 'cinematic', subtitles: true, cursorHighlights: true, narration: true, narrationEngine:'natural', narrationVoice:'melo_india', backgroundMusic:true, musicVolume:.24, bookends:true, themeSource: 'product', promoAspect: 'landscape' };
 export interface NarrationStatus { naturalReady:boolean; systemReady:boolean; state:'missing'|'installing'|'ready'|'failed'; message:string; progress?:number; voices:{id:string;label:string;ready:boolean}[]; }
 export interface EditCamera { contextHold: number; moveDuration: number; releaseDuration: number; }
 /** Outgoing transition, centered on the boundary without shortening either film. */

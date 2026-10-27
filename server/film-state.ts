@@ -21,6 +21,7 @@ export interface FilmState {
   camera?: EditCamera;
   transition?: EditTransition;
   externalTransitions?: boolean;
+  bookend?: { kind: 'intro'|'outro'|'none'; opacity: number; reveal: number; tagline?: string };
   visualModel?: ProductVisualModel;
   cursor?: { x: number; y: number; click?: boolean };
 }

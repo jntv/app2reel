@@ -21,24 +21,37 @@ function fixture(): Project {
 test('graphics promo renders without screenshots and exports the same burned subtitle timeline', {skip:!available}, async () => {
   const directory = await mkdtemp(path.join(tmpdir(),'capture-graphics-'));
   try {
-    const project=fixture();project.renderSettings!.promoAspect='portrait';
+    const project=fixture();project.renderSettings!.promoAspect='portrait';project.scenes[0].duration=4;
     const [output] = await renderVideos(project,directory,['promo']);
     assert.deepEqual([output.width,output.height],[720,1280]);
     assert.match(output.revision||'',/^[a-f\d-]{36}$/,'Each successful export needs a fresh browser cache identity.');
-    assert.equal(output.duration,1.2);
+    assert.equal(output.duration,4);
     assert.ok(output.poster);
     const srt = await readFile(path.join(directory,'captions.srt'),'utf8');
-    assert.match(srt,/00:00:00,000 --> 00:00:01,200/);
+    assert.match(srt,/00:00:00,000 --> 00:00:04,000/);
     assert.equal(srt,await readFile(path.join(directory,'narration.srt'),'utf8'));
     assert.match(await readFile(path.join(directory,'captions.vtt'),'utf8'),/^WEBVTT/);
     const frames = spawnSync(ffmpeg!,['-v','error','-i',path.join(directory,output.file),'-an','-f','framemd5','-'],{encoding:'utf8'});
     assert.equal(frames.status,0,frames.stderr);
     const hashes=frames.stdout.split('\n').filter(line=>/^0,/.test(line)).map(line=>line.split(',').at(-1)!.trim());
-    assert.equal(hashes.length,36);
+    assert.equal(hashes.length,120);
     assert.ok(new Set(hashes).size>30,'The promo must contain real frame-to-frame motion.');
     const poster=spawnSync(ffmpeg!,['-v','error','-i',path.join(directory,output.poster!),'-f','null','-'],{encoding:'utf8'});
     assert.equal(poster.status,0,poster.stderr);
     assert.ok(!(await readdir(directory)).some(file=>file.startsWith('.render-')));
+    // Exercise the setting through the actual frame renderer, not only the
+    // template helper: both brand cards must disappear while the clock stays put.
+    project.renderSettings!.bookends=false;
+    const [withoutBookends]=await renderVideos(project,directory,['promo']);
+    assert.equal(withoutBookends.duration,output.duration);
+    assert.notEqual(withoutBookends.revision,output.revision);
+    assert.equal(await readFile(path.join(directory,'captions.srt'),'utf8'),srt,'A visual bookend change must preserve the subtitle clock.');
+    const bareFrames=spawnSync(ffmpeg!,['-v','error','-i',path.join(directory,withoutBookends.file),'-an','-f','framemd5','-'],{encoding:'utf8'});
+    assert.equal(bareFrames.status,0,bareFrames.stderr);
+    const bareHashes=bareFrames.stdout.split('\n').filter(line=>/^0,/.test(line)).map(line=>line.split(',').at(-1)!.trim());
+    assert.equal(bareHashes.length,hashes.length,'Brand cards cannot add or remove reviewed film frames.');
+    assert.notEqual(bareHashes[0],hashes[0],'The enabled opening must appear in the first encoded frame.');
+    assert.notEqual(bareHashes.at(-1),hashes.at(-1),'The enabled closing must hold through the final encoded frame.');
   } finally { await rm(directory,{recursive:true,force:true}); }
 });
 

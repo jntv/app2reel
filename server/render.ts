@@ -15,6 +15,7 @@ import { readPreparedNarration } from './narration-cache.js';
 import { productFontCss, resolveFilmTheme } from './film-theme.js';
 import {transitionFilter} from './demo-motion.js';
 import {mixFilmAudio} from './audio-mix.js';
+import {filmBookendState} from './film-bookends.js';
 
 const FPS = 30;
 const MAX_SECONDS = 180;
@@ -219,7 +220,9 @@ export async function renderVideos(project: Project, directory: string, kinds: O
       const cues=narration?.cues||subtitleCues(scenes);
       const stateAt=(sceneIndex:number,progress:number,totalFrame:number):FilmState=>{
         const scene=scenes[sceneIndex],time=(totalFrame+.5)/FPS;
-        return {name:safeText(project.brief.name,80),title:safeText(scene.title,160),caption:safeText(scene.caption,360),feature:safeText(scene.feature||`Chapter ${String(sceneIndex+1).padStart(2,'0')}`,100),url:humanUrl(project.brief.url),scene:sceneIndex,scenes:scenes.length,progress,totalProgress:(totalFrame+.5)/totalFrames,time,duration:scene.duration,motion:settings.motion,focus:scene.focus,focusArea:scene.focusArea,focusRevealAt:scene.focusRevealAt,camera:scene.camera,transition:scene.transition,externalTransitions:true,visualModel:scene.visualModel,...(settings.subtitles?{...subtitleAt(cues,time),subtitleOpacity:subtitleOpacityAt(cues,time)}:{subtitle:'',subtitleWord:-1,subtitleOpacity:0})};
+        const bookend=settings.bookends!==false?filmBookendState(progress*scene.duration,scene.duration,sceneIndex===0,sceneIndex===scenes.length-1,kind):{kind:'none' as const,opacity:0,reveal:0};
+        if(bookend.kind==='intro')bookend.tagline=safeText(scene.caption,360);
+        return {name:safeText(project.brief.name,80),title:safeText(scene.title,160),caption:safeText(scene.caption,360),feature:safeText(scene.feature||`Chapter ${String(sceneIndex+1).padStart(2,'0')}`,100),url:humanUrl(project.brief.url),scene:sceneIndex,scenes:scenes.length,progress,totalProgress:(totalFrame+.5)/totalFrames,time,duration:scene.duration,motion:settings.motion,focus:scene.focus,focusArea:scene.focusArea,focusRevealAt:scene.focusRevealAt,camera:scene.camera,transition:scene.transition,externalTransitions:true,visualModel:scene.visualModel,bookend,...(settings.subtitles?{...subtitleAt(cues,time),subtitleOpacity:subtitleOpacityAt(cues,time)}:{subtitle:'',subtitleWord:-1,subtitleOpacity:0})};
       };
       const {width,height}=outputDimensions(project,kind);
       await page.setViewportSize({width,height});

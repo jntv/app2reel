@@ -12,13 +12,45 @@ import {cameraAt, cameraForFrame, cameraKeys, cameraTiming, demoLayout, transiti
 import {renderTimeline, renderVideos} from '../server/render.js';
 import {narrationFingerprint, readPreparedNarration} from '../server/narration-cache.js';
 import {subtitleCues, subtitleSrt} from '../server/subtitles.js';
+import {Store, renderSettingsSchema} from '../server/store.js';
 import type {FilmState} from '../server/film-state.js';
-import type {EditTransition, Project, Scene} from '../shared/types.js';
+import {DEFAULT_RENDER_SETTINGS, type EditTransition, type Project, type Scene} from '../shared/types.js';
 
 const execute=promisify(execFile);
 const available=Boolean(ffmpeg&&existsSync(chromium.executablePath()));
 const run=async(args:string[])=>execute(ffmpeg!,['-hide_banner','-v','error','-nostdin','-y',...args],{maxBuffer:8*1024*1024});
 const scene=(id:string,duration:number):Scene=>({id,title:`Chapter ${id}`,caption:'Observed workflow.',narration:'Keep work clear.',duration,recordingStart:0,recordingEnd:1.2,focus:{x:.5,y:.5,zoom:1}});
+
+test('branded bookends default on for new and legacy settings and accept only an explicit boolean',()=>{
+  const legacy={motion:'cinematic' as const,subtitles:true,cursorHighlights:true};
+  assert.equal(DEFAULT_RENDER_SETTINGS.bookends,true);
+  assert.equal({...DEFAULT_RENDER_SETTINGS,...renderSettingsSchema.parse(legacy)}.bookends,true,'A saved project from before bookends were added uses the branded opening and closing.');
+  assert.equal(renderSettingsSchema.parse({...legacy,bookends:false}).bookends,false);
+  assert.equal(renderSettingsSchema.parse({...legacy,bookends:true}).bookends,true);
+  for(const bookends of ['false',0,null,{}])assert.equal(renderSettingsSchema.safeParse({...legacy,bookends}).success,false);
+});
+
+test('saved bookend choices survive restart without changing reviewed footage, scripts or film clocks',async()=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'capture-bookend-settings-'));
+  try{
+    const store=new Store(directory);await store.init();
+    const fixture=project(),saved=await store.create(fixture.brief);
+    assert.equal(saved.renderSettings?.bookends,true);
+    saved.recording=fixture.recording;saved.scenes=fixture.scenes;saved.filmPlans=fixture.filmPlans;
+    saved.renderSettings=renderSettingsSchema.parse({...saved.renderSettings,bookends:false});
+    await store.save(saved);
+    const reopened=new Store(directory);await reopened.init();
+    const restored=reopened.get(saved.id);
+    assert.equal(restored.renderSettings?.bookends,false,'An explicit opt-out must not be replaced by the default on reload.');
+    assert.equal(restored.recording,fixture.recording);
+    assert.deepEqual(restored.scenes,fixture.scenes);
+    assert.deepEqual(restored.filmPlans,fixture.filmPlans,'Bookends share the reviewed clock and cannot silently rewrite either film plan.');
+    delete restored.renderSettings!.bookends;
+    await reopened.save(restored);
+    const legacy=new Store(directory);await legacy.init();
+    assert.equal({...DEFAULT_RENDER_SETTINGS,...legacy.get(saved.id).renderSettings}.bookends,true);
+  }finally{await rm(directory,{recursive:true,force:true});}
+});
 
 test('reviewed films retain independently authored lengths and reject oversized timelines',()=>{
   for(const [count,duration,total] of [[10,11,110],[6,30,180],[9,5,45]]){

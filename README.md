@@ -29,7 +29,7 @@ It uses **your ChatGPT subscription through the installed Codex CLI** for AI-ass
 | Teach the workflow. | Tell the product story. |
 | Landscape, 720p or 1080p. | Landscape or portrait, 720p or 1080p. |
 
-Both have independent scripts and edits. Export MP4, narration WAV/TXT, SRT/WebVTT subtitles, and storyboard JSON. The launch film uses graphics modeled on the observed product; it does not embed private screenshot pixels.
+Both have independent scripts and edits. Branded intros and closing invitations use your product’s colors and typography, with smooth blends into the film and a readable product URL at the end. Turn **Branded intro & outro** on or off in Film style; these beats fit inside the reviewed first and last scene durations, preserving the voice and subtitle clock. Export MP4, narration WAV/TXT, SRT/WebVTT subtitles, and storyboard JSON. The launch film uses graphics modeled on the observed product; it does not embed private screenshot pixels.
 
 ## Get started
 

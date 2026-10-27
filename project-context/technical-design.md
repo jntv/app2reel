@@ -24,11 +24,13 @@ Capture records Shot.entryStart/entrySettled/actionStart/actionEnd so selected f
 
 ## Security, deployment, operations
 
+`film-bookends.ts` computes deterministic intro/outro envelopes within the first/last reviewed scene clocks and supplies the shared full-screen branded artwork to both templates. `RenderSettings.bookends` defaults on, validates as an optional boolean for legacy projects, and saves through the existing style endpoint. An explicit inactive bookend state disables legacy internal brand beats when the toggle is off. Typography and the closing product URL use text-only DOM insertion; captions stay above the artwork. No narration samples, source intervals, camera clocks or film durations are changed by this visual treatment.
+
 The original soundtrack is composed offline by `brand-music.ts` as deterministic 48 kHz stereo PCM: changing extended chords, warm keys/pads, soft bass, sparse plucks and a resolved ending. `audio-mix.ts` applies an independent low music gain, uses original mono speech as the sidechain key, and limits without automatic gain or lookahead delay. Both normal renders and `POST /music` use this mixer. Soundtrack-only updates validate original per-film voice caches, ignore previously mixed audio, and copy encoded video packets. They stage all replacements and retain rollback bytes until publication succeeds; voice, subtitle, timing, poster and previous export files remain untouched. New revisions invalidate cached player media.
 
 Loopback host/origin validation and JSON-only mutations mitigate cross-site access; frame embedding is denied. No local multi-user auth exists, so do not expose the server on a public interface. Keep product test accounts disposable; recordings/screenshots can include PII. Credentials must never enter AI prompts/logs. Project URL query strings and link queries are excluded from model observations. Raw browser footage is published only after a successful exploration with no detected login form.
 
-Run through Node22+, installed dependencies, current Codex CLI and Playwright Chromium. Configured environment values have no checked-in secrets. Logs are bounded project events, without raw CLI output. Stop the server to roll back code; remove ignored project directories for local data cleanup. Upgrade or re-explore rather than migrating old in-flight jobs. Existing source has no remote identity.
+Run through Node22+, installed dependencies, current Codex CLI and Playwright Chromium. Configured environment values have no checked-in secrets. Logs are bounded project events, without raw CLI output. Stop the server to roll back code; remove ignored project directories for local data cleanup. Upgrade or re-explore rather than migrating old in-flight jobs. The source remote is `https://github.com/jntv/app2reel`; private `.capture` media and authentication state remain outside Git.
 
 ## Verification and limitations
 
