@@ -14,10 +14,12 @@ export interface FilmAudioOptions {
 export function filmAudioFilter(duration:number,volume:number,narrated:boolean,music:boolean):string {
   if(!Number.isFinite(duration)||duration<=0||duration>180||!Number.isFinite(volume)||volume<0||volume>.5)throw new Error('Invalid film audio settings.');
   const finish=`alimiter=limit=0.94:level=0:latency=1,atrim=duration=${duration},asetpts=PTS-STARTPTS[audio]`;
+  // Keep both compressor inputs alive until the final trim ends the mix. An
+  // upstream EOF can otherwise discard samples still in its private FIFOs.
   if(narrated&&music)return [
-    `[1:a]aresample=48000,apad,atrim=duration=${duration},asetpts=PTS-STARTPTS,asplit=2[speech][key]`,
+    '[1:a]aresample=48000,apad,asetpts=PTS-STARTPTS,asplit=2[speech][key]',
     '[speech]pan=stereo|c0=0.70710678*c0|c1=0.70710678*c0[voice]',
-    `[2:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=${volume}[music]`,
+    `[2:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=${volume},apad[music]`,
     '[music][key]sidechaincompress=threshold=0.12:ratio=2.5:attack=40:release=650:knee=2.828:makeup=1:detection=rms[bed]',
     `[voice][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,${finish}`,
   ].join(';');
