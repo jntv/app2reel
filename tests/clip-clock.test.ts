@@ -79,3 +79,28 @@ test('the full demo renderer preserves a short middle view through its hold and 
     const offset=72*pixelsPerFrame+(45*160+80)*3;assert.ok(decoded.stdout[offset+2]>decoded.stdout[offset+1]*3,'The modal begins exactly on the next reviewed cut.');
   }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+test('an opaque branded intro becoming transparent cannot restart the source cut clock',{skip:!ffmpeg||!existsSync(chromium.executablePath()),timeout:60000},async()=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'capture-intro-source-clock-'));
+  try{
+    await fixture(path.join(directory,'capture.mkv'),'ffv1');
+    const retainedSeconds=12/30;
+    const starts=[framesBefore/30,(framesBefore+retained)/30];
+    const scenes:Scene[]=starts.map((start,index)=>({id:`scene-${index}`,title:'Observed view',caption:'',narration:'',duration:index===0?4:1.2,recordingStart:start,recordingEnd:start+retainedSeconds,recordingRanges:[{start,end:start+retainedSeconds}],focus:{x:.5,y:.5,zoom:1},transition:{type:'cut',duration:0}}));
+    const project:Project={id:'intro-clock-fixture',brief:{name:'Fixture',url:'https://example.test',description:'Recorded views',purpose:'Verify source cuts',actors:'Teams',features:['Observed'],brandColor:'#00a0d0',duration:10,resolution:'720p',maxSteps:3,allowedOrigins:[],allowWrites:false,sample:true},createdAt:'',updatedAt:'',stage:'review',progress:0,message:'',logs:[],sources:[],findings:[],shots:[],scenes,outputs:[],recording:'capture.mkv',renderSettings:{motion:'cinematic',subtitles:false,cursorHighlights:false,narration:false,backgroundMusic:false,bookends:true}};
+    const [output]=await renderVideos(project,directory,['demo']);
+    assert.equal(output.duration,5.2);
+    const decoded=await execute(ffmpeg!,['-v','error','-i',path.join(directory,output.file),'-vf','scale=160:90','-an','-f','rawvideo','-pix_fmt','rgb24','pipe:1'],{encoding:'buffer',maxBuffer:160*90*3*160});
+    const pixelsPerFrame=160*90*3;
+    assert.equal(decoded.stdout.length,pixelsPerFrame*156,'The branded intro must not change the reviewed film clock.');
+    // The intro is fully opaque before dissolving away at two seconds. Those
+    // screenshots have different alpha needs, but must stay one encoder format.
+    const first=decoded.stdout.subarray((45*160+80)*3,(45*160+80)*3+3);
+    assert.ok(!(first[1]>first[0]*3&&first[1]>first[2]*3),'The opening should cover the product before its reveal.');
+    for(let frame=66;frame<156;frame++){
+      const offset=frame*pixelsPerFrame+(45*160+80)*3,[red,green,blue]=decoded.stdout.subarray(offset,offset+3);
+      if(frame<120)assert.ok(green>red*3&&green>blue*3,`The blue next scene leaked into held green frame${frame} after the intro dissolved.`);
+      else assert.ok(blue>red*3&&blue>green*3,`The blue scene must begin on reviewed frame120, not drift at frame${frame}.`);
+    }
+  }finally{await rm(directory,{recursive:true,force:true});}
+});

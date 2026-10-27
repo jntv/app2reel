@@ -15,6 +15,7 @@ Initial source release preparation. No GitHub release has been published yet.
 
 ### Fixed
 
+- Keep opaque intro cards and transparent walkthrough artwork on one RGBA frame format, preventing encoder filter resets from advancing held footage into the next page.
 - Keep an exact frame clock through mixed cuts and transitions on Linux FFmpeg.
 - Preserve the full narration duration at 48 kHz so visual-only rerenders can reuse reviewed speech and captions.
 - Keep ducked background music present through the final audio frame when replacing a film's existing mix.

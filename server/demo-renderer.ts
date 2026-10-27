@@ -3,6 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Page } from 'playwright';
+import { PNG } from 'pngjs';
 import type { PrivacyMask, ProductTheme, Project, Scene } from '../shared/types.js';
 import type { FilmState } from './film-state.js';
 import { demoTemplate } from './demo-template.js';
@@ -101,7 +102,10 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
     const segment = path.join(temporary, `demo-scene-${index}.mp4`);
     const job = encoder([
       ...clock.seek, '-i', recording,
-      '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(fps), '-i', 'pipe:0',
+      // Chrome encodes opaque PNGs as RGB and transparent PNGs as RGBA. A
+      // format change reinitializes the entire FFmpeg graph, resetting source
+      // trims and held frames. Feed one fixed, lossless format for every frame.
+      '-f', 'rawvideo', '-pixel_format', 'rgba', '-video_size', `${width}x${height}`, '-framerate', String(fps), '-i', 'pipe:0',
       '-filter_complex', filter, '-map', '[out]', '-an', '-t', String(outputDuration), ...encodingOptions(), segment,
     ], signal);
     let lastClick: { sourceX: number; sourceY: number; at: number } | undefined;
@@ -122,7 +126,10 @@ export async function renderDynamicDemo(options: DynamicDemoOptions): Promise<st
           const target = window as unknown as { setDemoState: (value: unknown) => Promise<void> };
           await target.setDemoState(payload);
         }, { film, cursor: pointer, click, attention, labelAnchor,...demoArtworkTiming(frame/fps,outputDuration,move,index===0,index===scenes.length-1),captionOpacity:film.subtitleOpacity??1,cursorHighlights:settings?.cursorHighlights!==false });
-        const pixels = await page.screenshot({ type: 'png', omitBackground: true, animations: 'disabled' });
+        const screenshot = await page.screenshot({ type: 'png', omitBackground: true, animations: 'disabled' });
+        const decoded = PNG.sync.read(screenshot);
+        if (decoded.width !== width || decoded.height !== height || decoded.data.length !== width * height * 4) throw new Error('Demo artwork dimensions changed during rendering.');
+        const pixels = decoded.data;
         const input = job.process.stdin;
         if (!input || input.destroyed) { await job.done; throw new Error('Demo encoder input closed.'); }
         if (!input.write(pixels)) await Promise.race([once(input, 'drain'), job.done.then(() => { throw new Error('Demo encoder closed before receiving all frames.'); })]);
