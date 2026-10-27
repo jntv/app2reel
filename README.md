@@ -11,7 +11,9 @@
 [![CI](https://github.com/jntv/app2reel/actions/workflows/ci.yml/badge.svg)](https://github.com/jntv/app2reel/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/jntv/app2reel?style=flat&color=e85b32)](https://github.com/jntv/app2reel)
 
-[Get started](#get-started) · [How it works](#how-it-works) · [Voice setup](docs/voices.md) · [Contribute](CONTRIBUTING.md)
+[Quick start](#get-started) · [Try the sample](#try-the-sample) · [Use your own product](#use-your-own-product) · [Voice setup](docs/voices.md#set-up-natural-voices) · [Troubleshooting](docs/installation.md#troubleshooting)
+
+[Full installation guide](docs/installation.md) · [Using the studio](docs/usage.md) · [Report a bug](https://github.com/jntv/app2reel/issues/new?template=bug_report.yml) · [Contribute](CONTRIBUTING.md)
 
 </div>
 
@@ -33,7 +35,9 @@ Both have independent scripts and edits. Branded intros and closing invitations 
 
 ## Get started
 
-**Requirements:** Git and **Node.js 22.13 or newer**. macOS and Linux are the primary environments; optional designed voices require Apple Silicon/macOS 14+. See [platform and voice requirements](docs/installation.md#requirements).
+**Start with the included sample:** install the studio, turn narration off, and export your first films. The sample needs no ChatGPT sign-in or Python. To explore your own product or add natural narration, follow the extra steps below.
+
+**Requirements:** Git and **Node.js 22.13 or newer**. macOS and Linux are the primary environments. [Download prerequisites and check platform support →](docs/installation.md#requirements)
 
 ```bash
 git clone https://github.com/jntv/app2reel.git
@@ -45,13 +49,38 @@ pnpm run doctor
 pnpm dev
 ```
 
-Open **[http://127.0.0.1:4310](http://127.0.0.1:4310)**. `setup` installs Chromium; `doctor` explains missing prerequisites. Linux may need browser system libraries. [Full installation and npm alternative →](docs/installation.md)
+Open **[http://127.0.0.1:4310](http://127.0.0.1:4310)** and keep the terminal running. `setup` installs Chromium; `doctor` checks dependencies, Chromium, FFmpeg, and optional account/voice prerequisites. [Linux browser libraries](docs/installation.md#linux-browser-dependencies) · [npm alternative](docs/installation.md#npm-alternative) · [Setup help](docs/installation.md#troubleshooting)
 
-**Try it before connecting an account:** click **Try a sample project**, then start exploration. The fictional Orbit app exercises real browser recording and rendering without AI calls or external research. Before rendering, open **Your films → Film style**, turn **Spoken narration** off, and **Save film style**. The default natural voice otherwise requires the separate [voice setup](docs/voices.md).
+For the sample, you can continue when `doctor` reports **Core runtime is ready**; missing Codex or natural-voice prerequisites are optional warnings.
 
-**For your own product:** [install Codex and sign in with ChatGPT](docs/installation.md#connect-chatgpt-for-your-own-product), then enter your product URL and brief. You can also connect from the studio. Each person uses their own account. API-key Codex sessions must be switched explicitly in the terminal.
+### Try the sample
 
-For natural narration, install Python 3.12 or 3.13 and run `pnpm setup:voice`. This downloads the selected speech model once; subsequent speech generation runs locally. [Voice choices and download sizes →](docs/voices.md)
+1. Click **Try a sample project**, then start exploration. The fictional Orbit app records real browser interactions without AI calls or external research.
+2. Open **Your films → Film style**, turn **Spoken narration** off, and click **Save film style**. Natural narration is on by default and needs its own setup.
+3. Click **Render both films**, preview them, and download the MP4s. Keep the sample's supplied storyboard; **AI editing plan** uses Codex.
+
+### Use your own product
+
+Install Codex and sign into your own ChatGPT account:
+
+```bash
+npm install --global @openai/codex
+codex login
+```
+
+Choose **Sign in with ChatGPT**, then click **New project** in the studio and enter your product URL, brief, and feature list. Use a test account for signed-in product workflows. Each person uses their own ChatGPT account; access and usage limits apply. [Account setup and existing API-key sessions →](docs/installation.md#connect-chatgpt-for-your-own-product)
+
+For natural narration, install **Python 3.12 or 3.13**, then run:
+
+```bash
+pnpm setup:voice
+```
+
+This installs the default Indian-English voice with a one-time model download, about **165 MB plus Python packages**. After terminal setup, refresh the studio, open **Your films → Film style**, turn **Spoken narration** on, choose the voice, click **Preview voice**, then **Save film style** before rendering. The studio also has a **Set up natural voices** button. Optional designed Qwen voices require Apple Silicon/macOS 14+. [Voice choices, platform requirements, and download sizes →](docs/voices.md)
+
+To use an installed device voice without Python, explicitly choose **System (fallback)**; see [supported system voices](docs/voices.md).
+
+**Next time:** run `pnpm dev` from the cloned folder. macOS users can also double-click **Start App2Reel.command** in that folder after setup. [Launcher and built-interface details →](docs/installation.md#later-launches-and-built-interface)
 
 ## How it works
 
@@ -72,7 +101,9 @@ flowchart LR
 
 ## What to expect
 
-- **Early release:** browser exploration can miss features. Inspect the evidence and the resulting films.
+- **Review feature coverage:** exploration targets your feature list within a step budget and the current account's permissions. Some features can remain unobserved; check the evidence before rendering.
+- **Preview the voice:** pronunciation and naturalness vary with the voice and script. Some voices use estimated word-highlight timings. [Narration timing →](docs/voices.md#timing-and-rendering)
+- **Review the visible action:** short recorded clips can finish in a held frame. Branded intros/outros share the first/last scene clocks and can cover part of an interaction; review their placement or turn them off in Film style.
 - **Local, single-user studio:** the server binds to `127.0.0.1`; it has no multi-user authentication.
 - **AI-assisted runs send context to OpenAI:** product briefs, screenshots, and visible page text can leave the machine through Codex. Raw recording and rendering stay local. [Privacy and browser boundaries →](docs/privacy.md)
 - **Rendering takes time:** duration, resolution, hardware, and voice choices affect runtime. Longer films cannot create interactions absent from the recording.
