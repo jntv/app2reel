@@ -11,7 +11,7 @@
 [![CI](https://github.com/jntv/app2reel/actions/workflows/ci.yml/badge.svg)](https://github.com/jntv/app2reel/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/jntv/app2reel?style=flat&color=e85b32)](https://github.com/jntv/app2reel)
 
-[Quick start](#get-started) · [Try the sample](#try-the-sample) · [Use your own product](#use-your-own-product) · [Voice setup](docs/voices.md#set-up-natural-voices) · [Troubleshooting](docs/installation.md#troubleshooting)
+[Watch sample films](#watch-the-sample-films) · [Quick start](#get-started) · [Try the sample](#try-the-sample) · [Use your own product](#use-your-own-product) · [Voice setup](docs/voices.md#set-up-natural-voices) · [Troubleshooting](docs/installation.md#troubleshooting)
 
 [Full installation guide](docs/installation.md) · [Using the studio](docs/usage.md) · [Report a bug](https://github.com/jntv/app2reel/issues/new?template=bug_report.yml) · [Contribute](CONTRIBUTING.md)
 
@@ -20,6 +20,24 @@
 App2Reel explores a web product in a real browser, records its workflows, and helps you shape two separate films. Review the evidence, edit the story, and export MP4s with narration and subtitles.
 
 It uses **your ChatGPT subscription through the installed Codex CLI** for AI-assisted research and planning. Browser recording, speech synthesis, and video rendering run on your laptop. No OpenAI API key is used by the app. Account access and usage limits still apply.
+
+## Watch the sample films
+
+Actual App2Reel exports made for **SmartSevak**, with product-themed intros/outros, narration, word-highlighted subtitles, and original background music. **Turn sound on** to hear the voice and music.
+
+**Product walkthrough · 1 min 28 sec · landscape**
+
+Recorded browser interactions with camera moves and pointer highlights. Light-gray privacy masks cover account and personal details in this public copy.
+
+https://github.com/user-attachments/assets/f9e535a2-9986-466b-a1a9-bbdaa06710e0
+
+**Launch film · 55 sec · portrait**
+
+Animated product-inspired interfaces, kinetic headlines, depth, and transitions.
+
+https://github.com/user-attachments/assets/f42d8c2f-7ad2-4305-9469-382d8cadd630
+
+These samples use the optional **Designed Indian English · adult woman** voice. The default natural voice is a separate, smaller download. [Sample settings and downloads →](docs/samples.md) · [Choose a voice →](docs/voices.md)
 
 ![The App2Reel local studio, shown with an empty workspace](assets/readme/studio.png)
 
@@ -112,6 +130,7 @@ flowchart LR
 
 | Guide | Contents |
 | --- | --- |
+| [Sample films](docs/samples.md) | Watch the finished walkthrough and launch film, with settings and downloads. |
 | [Installation](docs/installation.md) | Setup, sample project, configuration, and troubleshooting. |
 | [Using the studio](docs/usage.md) | Exploration, editing, masks, rendering, and exports. |
 | [Local voices](docs/voices.md) | Voice packs, supported platforms, timing, and upstream licenses. |

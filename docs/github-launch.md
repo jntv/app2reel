@@ -8,7 +8,7 @@ The public repository is **[jntv/app2reel](https://github.com/jntv/app2reel)**. 
 - Description: `Turn a product URL and brief into a narrated demo and animated launch film. Local rendering, your Codex subscription, MIT licensed.`
 - Topics: the 11 entries in [topics.json](../.github/topics.json). GitHub calls discovery tags **topics**; release tags such as `v0.1.0` are separate.
 - Social preview: [social-preview.png](../assets/readme/social-preview.png), 1280 × 640 pixels. Upload it under **Settings → General → Social preview**.
-- README: lead with the result, screenshot, real setup commands, and sample project. Add a short actual output video after verifying it is safe to publish. The banner illustrates the workflow; it is not a rendered output example.
+- README: lead with the [finished sample films](../README.md#watch-the-sample-films), screenshot, real setup commands, and sample project. The banner illustrates the workflow; the video players show actual exports. See [sample settings](samples.md) for the voice and public playback resolutions.
 - Enable issues and private vulnerability reporting. Enable Discussions when you are ready to support community conversations.
 - Keep raw recordings, credentials, local model downloads, and `node_modules/` out of Git. `.capture/` and `.env` are ignored.
 
@@ -58,6 +58,8 @@ The [Repository stats workflow](../.github/workflows/repo-stats.yml) records a d
 For a more useful launch scorecard, record successful first runs, time to the first export, reproducible bugs, and examples people share. Ask for consent before publishing somebody else's films or account screenshots. There is no installation telemetry in this launch setup.
 
 ## Launch assets still to record
+
+The complete SmartSevak walkthrough and portrait launch film are available in the [README](../README.md#watch-the-sample-films). The walkthrough is a separately redacted public copy; the media is hosted as GitHub attachments to keep source clones small.
 
 - One 15–30 second clip: finished output first, URL and brief, browser exploration, then both exported films.
 - Three reproducible examples from products you own or have permission to demonstrate. Include the exact brief, settings, machine, runtime, and exported result.
